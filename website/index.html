@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="ka">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="MyFilm — ყურე ფილმები და სერიალები ონლაინ. Netflix-მსგავსი ქართული პლატფორმა.">
+  <meta name="theme-color" content="#0a0a0f">
+  <title>MyFilm — ონლაინ კინო</title>
+  <link rel="icon" type="image/png" href="favicon.png">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- ===== NAVBAR (ყოველთვის ხილული) ===== -->
+  <nav id="navbar">
+    <a class="nav-brand" href="#/home" id="nav-home">
+      <svg class="nav-logo-icon" viewBox="0 0 40 40" fill="none">
+        <rect width="40" height="40" rx="10" fill="#e50914"/>
+        <polygon points="20,10 32,20 20,30" fill="white" opacity="0.9"/>
+        <path d="M8 30V10l10 10L8 30z" fill="white"/>
+      </svg>
+      <span class="nav-logo-text">MyFilm</span>
+    </a>
+
+    <button class="nav-burger" id="nav-burger" aria-label="Toggle Menu">
+      <span></span>
+      <span></span>
+      <span></span>
+    </button>
+
+    <div class="nav-links">
+      <a href="#/home"       id="nav-home-link">მთავარი</a>
+      <a href="#/movies"     id="nav-movies">ფილმები</a>
+      <a href="#/tv"         id="nav-tv">სერიალები</a>
+      <a href="#/anime"      id="nav-anime">ანიმე</a>
+      <a href="#/animation"  id="nav-animation">ანიმაცია</a>
+      <a href="#/search"     id="nav-search">ძიება</a>
+    </div>
+
+    <div class="nav-right">
+      <div class="nav-search-wrap">
+        <span class="nav-search-icon">🔍</span>
+        <input
+          id="nav-search-input"
+          type="search"
+          placeholder="ძებნა..."
+          autocomplete="off"
+          spellcheck="false"
+        >
+      </div>
+    </div>
+  </nav>
+
+  <!-- ===== VIEWS ===== -->
+  <!-- Home -->
+  <div id="view-home"   class="view view--active"></div>
+  <!-- Browse Views -->
+  <div id="view-movies"    class="view view--hidden"></div>
+  <div id="view-tv"        class="view view--hidden"></div>
+  <div id="view-anime"     class="view view--hidden"></div>
+  <div id="view-animation" class="view view--hidden"></div>
+  <!-- Detail -->
+  <div id="view-movie" class="view view--hidden"></div>
+  <!-- Search -->
+  <div id="view-search" class="view view--hidden"></div>
+
+  <!-- ===== FOOTER ===== -->
+  <footer id="site-footer">
+    <div class="footer-logo">MyFilm</div>
+    <p class="footer-text">
+      &copy; 2025 MyFilm &nbsp;|&nbsp;
+      ფილმების მეტა-ინფო:
+      <a href="https://www.themoviedb.org" target="_blank" rel="noopener" style="color:var(--accent)">TMDB</a>
+    </p>
+  </footer>
+
+  <!-- Toast -->
+  <div id="toast-container" aria-live="polite"></div>
+
+  <!-- ===== SCRIPTS (order matters!) ===== -->
+  <script src="js/config.js"></script>
+  <script src="js/custom_animes.js"></script>
+  <script src="js/router.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/player_v3.js"></script>
+  <script src="js/ui.js"></script>
+  <script src="js/home.js"></script>
+  <script src="js/browse.js"></script>
+  <script src="js/detail_v3.js"></script>
+  <script src="js/search_v3.js"></script>
+
+  <!-- ===== APP BOOTSTRAP ===== -->
+  <script>
+    // ---- Navbar scroll ----
+    (function() {
+      const nav = document.getElementById('navbar');
+      window.addEventListener('scroll', () =>
+        nav.classList.toggle('scrolled', window.scrollY > 40), { passive: true });
+
+      // Nav-search live
+      const inp = document.getElementById('nav-search-input');
+      let t;
+      inp.addEventListener('input', () => {
+        const q = inp.value.trim();
+        clearTimeout(t);
+        if (q.length >= 2) {
+          t = setTimeout(() => {
+            Router.go('/search/' + encodeURIComponent(q));
+          }, 380);
+        }
+      });
+      inp.addEventListener('keydown', e => {
+        if (e.key === 'Enter' && inp.value.trim()) {
+          Router.go('/search/' + encodeURIComponent(inp.value.trim()));
+          inp.value = '';
+        }
+      });
+
+      // Nav links — active highlight
+      function setActiveNav() {
+        const h = window.location.hash;
+        document.querySelectorAll('.nav-links a').forEach(a => {
+          a.classList.toggle('active',
+            h.startsWith(a.getAttribute('href').replace('#', '#')));
+        });
+        if (!h || h === '#' || h === '#/' || h === '#/home') {
+          document.getElementById('nav-home-link').classList.add('active');
+        }
+      }
+      window.addEventListener('hashchange', setActiveNav);
+      setActiveNav();
+
+      // Burger Menu Toggle
+      const burger = document.getElementById('nav-burger');
+      const navLinks = document.querySelector('.nav-links');
+      
+      burger.addEventListener('click', () => {
+        burger.classList.toggle('open');
+        navLinks.classList.toggle('nav-open');
+        
+        if (navLinks.classList.contains('nav-open')) {
+          document.body.style.overflow = 'hidden'; // Prevent background scrolling
+        } else {
+          document.body.style.overflow = '';
+        }
+      });
+      
+      // Close menu when a link is clicked
+      document.querySelectorAll('.nav-links a').forEach(link => {
+        link.addEventListener('click', () => {
+          burger.classList.remove('open');
+          navLinks.classList.remove('nav-open');
+          document.body.style.overflow = '';
+        });
+      });
+    })();
+
+    // ---- Register routes ----
+    Router.register('home',      params => HomeView.render(params));
+    Router.register('movie',     params => DetailView.render(params));
+    Router.register('search',    params => SearchView.render(params));
+
+    // Initialize BrowseViews
+    const MoviesView    = BrowseView.create('view-movies',    'MOVIES_SECTIONS',    '/movie/popular',                 '🎬 ფილმი');
+    const TvView        = BrowseView.create('view-tv',        'TV_SECTIONS',        '/tv/popular',                    '📺 სერიალი');
+    const AnimeView     = BrowseView.create('view-anime',     'ANIME_SECTIONS',     '/discover/tv?with_genres=16&with_original_language=ja&sort_by=vote_count.desc', '🌸 ანიმე');
+    const AnimationView = BrowseView.create('view-animation', 'ANIMATION_SECTIONS', '/discover/movie?with_genres=16&sort_by=popularity.desc', '🎨 ანიმაცია');
+
+    Router.register('movies',    params => MoviesView.render(params));
+    Router.register('tv',        params => TvView.render(params));
+    Router.register('anime',     params => AnimeView.render(params));
+    Router.register('animation', params => AnimationView.render(params));
+
+    // ---- Start ----
+    // Default to home if no hash
+    if (!window.location.hash || window.location.hash === '#') {
+      window.location.hash = '#/home';
+    }
+    Router.init();
+  </script>
+
+</body>
+</html>

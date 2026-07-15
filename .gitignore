@@ -1,0 +1,33 @@
+# Dependencies
+node_modules/
+dist/
+build/
+.npm/
+
+# Expo / React Native App dependencies
+jarvis-tv-app/node_modules/
+jarvis-tv-app/.expo/
+jarvis-tv-app/web-build/
+myfilm-app/node_modules/
+myfilm-app/.expo/
+myfilm-app/web-build/
+
+# Wrangler / Cloudflare Worker
+.wrangler/
+
+# Temporary and backup files
+*.bak
+temp_worker_node.js
+temp_extracted.json
+website_worker_node.js
+*.log
+
+# Screenshots & test assets
+*.png
+*.webp
+*.jpg
+*.jpeg
+
+# OS Files
+.DS_Store
+Thumbs.db
