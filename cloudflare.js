@@ -762,6 +762,83 @@ export default {
       return [];
     }
 
+    async function searchCroconet(query, type, season, episode) {
+      try {
+        const searchUrl = 'https://croconet.cam/?s=' + encodeURIComponent(query);
+        const r = await fetch(searchUrl, { headers: htmlHeaders() });
+        const html = await r.text();
+        const links = [...html.matchAll(/href=["'](https?:\/\/croconet\.cam)?(\/(?:movie|show|series|serial)\/\d+\/[^"']+)["']/gi)];
+        
+        const results = links.map(m => {
+           let url = m[2];
+           if (!url.startsWith('http')) url = 'https://croconet.cam' + url;
+           const parts = url.split('/');
+           const slug = parts[parts.length - 1] || '';
+           const title = slug.replace(/-/g, ' ');
+           return { url, title };
+        }).filter(m => {
+           if (m.url.includes('/category/')) return false;
+           if (m.url.includes('/genre/')) return false;
+           if (m.title.length < 2) return false;
+           return true;
+        });
+
+        const uniqueResults = [];
+        const seenUrls = new Set();
+        for (const res of results) {
+            if (!seenUrls.has(res.url)) {
+                seenUrls.add(res.url);
+                uniqueResults.push(res);
+            }
+        }
+
+        let bestMatch = null;
+        let bestScore = -1;
+        for (const m of uniqueResults) {
+          const score = scoreTitle(query, m.title);
+          if (score > bestScore) {
+            bestScore = score;
+            bestMatch = m;
+          }
+        }
+
+        if (bestMatch && bestScore > 0.2) {
+          const detailHtml = await getText(bestMatch.url, 'https://croconet.cam/');
+          const m3u8Regex = /https?:[^\s"'`,]+?\.m3u8/gi;
+          const matches = [...detailHtml.matchAll(m3u8Regex)].map(x => x[0]);
+          
+          const cleanLinks = matches.map(m => {
+              return m.replace(/\\+/g, '/').replace(/\/+/g, '/').replace(':/', '://');
+           }).filter(l => !l.includes('treiler') && !l.includes('trailer'));
+          
+          const uniqueLinks = [...new Set(cleanLinks)];
+          
+          if (type === 'series' && season !== undefined && episode !== undefined) {
+             const pattern = new RegExp(`\\/${season}_${episode}\\/ `, 'i'); // matches /1_1/
+             // also match /1-1/ or simple season/episode patterns
+             const matched = uniqueLinks.find(l => l.includes(`/${season}_${episode}/`) || l.includes(`/${season}-${episode}/`));
+             if (matched) {
+                return [{ file: matched, label: "Croconet.cam", rawUrl: matched, isIframe: false }];
+             }
+             // Fallback to match index in list
+             // Series page might contain episodes in list order
+             if (uniqueLinks.length) {
+                // If it contains series episode indices
+                const epLink = uniqueLinks.find(l => l.includes(`/${season}_`) || l.includes(`/series/`));
+                if (epLink) return [{ file: epLink, label: "Croconet.cam", rawUrl: epLink, isIframe: false }];
+             }
+          } else {
+             if (uniqueLinks.length) {
+                return [{ file: uniqueLinks[0], label: "Croconet.cam", rawUrl: uniqueLinks[0], isIframe: false }];
+             }
+          }
+        }
+      } catch (e) {
+        console.error("Croconet search error:", e);
+      }
+      return [];
+    }
+
     async function searchAdjaranetto(q) {
       try {
         const doSearch = async (query) => {
@@ -1160,6 +1237,28 @@ export default {
         }
       }
 
+      const season = url.searchParams.get("season") ? parseInt(url.searchParams.get("season")) : undefined;
+      const episode = url.searchParams.get("episode") ? parseInt(url.searchParams.get("episode")) : undefined;
+
+      // 1.5 Try Croconet.cam
+      if (!source || source === 'Croconet.cam') {
+        try {
+          const crocoStreams = await searchCroconet(cleanQ, "series", season, episode);
+          if (crocoStreams && crocoStreams.length) {
+             episodes.push({
+               season: season || 1,
+               episode: episode || 1,
+               playerIndex: 1,
+               title: `S${season || 1} / ეპიზოდი ${episode || 1}`,
+               pageUrl: crocoStreams[0].file,
+               candidate: crocoStreams[0].file,
+               streams: crocoStreams,
+               source: "Croconet.cam"
+             });
+          }
+        } catch (err) {}
+      }
+
       // 2. Try ufasofilmebi.ge
       if (!source || source === 'ufasofilmebi.ge') {
         try {
@@ -1180,9 +1279,19 @@ export default {
         } catch (e) {}
       }
 
+      // 3.5 Try Croconet.cam
+      if (!source || source === 'Croconet.cam') {
+        try {
+          const crocoStreams = await searchCroconet(cleanQ, "movie");
+          if (crocoStreams && crocoStreams.length) {
+             allPlayers.push({ streams: crocoStreams, candidate: crocoStreams[0].file, source: "Croconet.cam" });
+          }
+        } catch (e) {}
+      }
+
       // 4. Try Imovs.ge
-      if (!source || source === 'imovs.ge') {
-        if (allPlayers.length === 0) {
+      if (source === 'imovs.ge' || (!source && allPlayers.length === 0)) {
+        if (true) {
           const { base, html } = await strongSearch(cleanQ);
           if (html) {
             const candidates = pickMovieLinksFromSearch(html, base);

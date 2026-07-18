@@ -128,7 +128,7 @@ const Player = (() => {
           const q = cleanSeriesTitle(currentInfo.title || currentInfo.name);
           let fetchUrl = '';
           if (stream.searchType === 'series') {
-            fetchUrl = `${WORKER}/imovs-series?q=${encodeURIComponent(q)}&source=${stream.label}`;
+            fetchUrl = `${WORKER}/imovs-series?q=${encodeURIComponent(q)}&source=${stream.label}&season=${stream.season}&episode=${stream.episode}`;
           } else {
             fetchUrl = `${WORKER}/imovs?q=${encodeURIComponent(q)}&source=${stream.label}`;
           }
@@ -338,6 +338,8 @@ const Player = (() => {
       { name:'📺 adjaranetto', url: `https://adjaranetto.com/search?q=${encodeURIComponent(query)}` },
       { name:'🍿 chemikino', url: `https://chemikino.com/search?q=${encodeURIComponent(query)}` },
       { name:'🎬 ufasofilmebi.ge', url: `https://ufasofilmebi.ge/?s=${encodeURIComponent(query)}` },
+      { name:'🐊 Croconet.cam', url: `https://croconet.cam/?s=${encodeURIComponent(query)}` },
+      { name:'🔍 imovs.ge', url: `https://imovs.ge/search?q=${encodeURIComponent(query)}` },
       { name:'▶ VidSrc',     url: type==='tv' ? `https://vidsrc.to/embed/tv/${tmdbId}/1/1` : `https://vidsrc.to/embed/movie/${tmdbId}` },
       { name:'🌐 MultiEmbed',url: type==='tv' ? `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1&s=1&e=1` : `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1` },
     ];
@@ -358,8 +360,8 @@ const Player = (() => {
         const name = btn.dataset.name;
         
         // Trigger on-demand search inside the player instead of opening in a new tab!
-        if (name.includes('adjaranetto') || name.includes('chemikino') || name.includes('ufasofilmebi')) {
-           const label = name.includes('adjaranetto') ? 'adjaranetto.com' : (name.includes('chemikino') ? 'chemikino.com' : 'ufasofilmebi.ge');
+        if (name.includes('adjaranetto') || name.includes('chemikino') || name.includes('ufasofilmebi') || name.includes('Croconet') || name.includes('imovs')) {
+           const label = name.includes('adjaranetto') ? 'adjaranetto.com' : (name.includes('chemikino') ? 'chemikino.com' : (name.includes('ufasofilmebi') ? 'ufasofilmebi.ge' : (name.includes('Croconet') ? 'Croconet.cam' : 'imovs.ge')));
            const placeholderStream = {
              label: label,
              file: '',
@@ -544,6 +546,8 @@ function hasCJK(str) {
       { label: 'adjaranetto.com', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
       { label: 'chemikino.com', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
       { label: 'ufasofilmebi.ge', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
+      { label: 'Croconet.cam', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
+      { label: 'imovs.ge', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
       { label: 'VidSrc', file: `https://vidsrc.to/embed/movie/${tmdbId}`, rawUrl: `https://vidsrc.to/embed/movie/${tmdbId}`, isIframe: true },
       { label: 'MultiEmbed', file: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`, rawUrl: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`, isIframe: true }
     ];
@@ -578,6 +582,8 @@ function hasCJK(str) {
             { label: 'adjaranetto.com', file: '', rawUrl: '', isPlaceholder: true, searchType: 'series', season: s.season_number, episode: e },
             { label: 'chemikino.com', file: '', rawUrl: '', isPlaceholder: true, searchType: 'series', season: s.season_number, episode: e },
             { label: 'ufasofilmebi.ge', file: '', rawUrl: '', isPlaceholder: true, searchType: 'series', season: s.season_number, episode: e },
+            { label: 'Croconet.cam', file: '', rawUrl: '', isPlaceholder: true, searchType: 'series', season: s.season_number, episode: e },
+            { label: 'imovs.ge', file: '', rawUrl: '', isPlaceholder: true, searchType: 'series', season: s.season_number, episode: e },
             { label: 'VidSrc', file: `https://vidsrc.to/embed/tv/${info.tmdbId}/${s.season_number}/${e}`, rawUrl: `https://vidsrc.to/embed/tv/${info.tmdbId}/${s.season_number}/${e}`, isIframe: true },
             { label: 'MultiEmbed', file: `https://multiembed.mov/?video_id=${info.tmdbId}&tmdb=1&s=${s.season_number}&e=${e}`, rawUrl: `https://multiembed.mov/?video_id=${info.tmdbId}&tmdb=1&s=${s.season_number}&e=${e}`, isIframe: true }
           ];
