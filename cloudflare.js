@@ -601,26 +601,28 @@ export default {
 
     async function searchUfasofilmebi(query, type) {
       try {
-        const searchUrl = 'https://ufasofilmebi.ge/index.php?do=search';
-        const bodyText = 'do=search&subaction=search&story=' + encodeURIComponent(query.replace(/-/g, ' '));
+        const searchUrl = 'https://ufasofilmebi.ge/?s=' + encodeURIComponent(query);
         const r = await fetch(searchUrl, {
-          method: 'POST',
-          headers: { 'User-Agent': 'Mozilla/5.0', 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: bodyText
+          headers: { 'User-Agent': 'Mozilla/5.0' }
         });
         const html = await r.text();
-        const links = [...html.matchAll(/<a[^>]+href=["'](https?:\/\/[^"']+\/[^"']+\/)["'][^>]*>(.*?)<\/a>/gi)];
+        
+        const links = [...html.matchAll(/href=["'](https?:\/\/ufasofilmebi\.ge)?(\/[^"\'\s/]+\/)["']/gi)];
         
         const results = links.map(m => {
-           const url = m[1];
-           let title = m[2].replace(/<[^>]+>/g, '').trim();
+           let url = m[2];
+           if (!url.startsWith('http')) url = 'https://ufasofilmebi.ge' + url;
+           const slug = url.split('/').filter(Boolean).pop() || '';
+           const title = decodeURIComponent(slug).replace(/-/g, ' ');
            return { url, title };
         }).filter(m => {
            if (m.url.includes('/genre/')) return false;
            if (m.url.includes('/country/')) return false;
-           if (m.url.includes('/year')) return false;
+           if (m.url.includes('/year/')) return false;
            if (m.url.includes('/actor/')) return false;
            if (m.url.includes('/director/')) return false;
+           if (m.url.includes('/wp-content/')) return false;
+           if (m.url.includes('/page/')) return false;
            if (m.title.length < 2) return false;
            return true;
         });
@@ -637,14 +639,14 @@ export default {
         let bestScore = 0;
         let bestMatch = null;
         for (const res of uniqueResults) {
-           let score = scoreTitle(query.replace(/-/g, ' '), res.title);
+           let score = scoreTitle(query, res.title);
            if (score > bestScore) {
              bestScore = score;
              bestMatch = res;
            }
         }
 
-        if (bestMatch && bestScore > 0.3) {
+        if (bestMatch && bestScore > 0.2) {
           const detailR = await fetch(bestMatch.url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
           const detailHtml = await detailR.text();
           
@@ -657,17 +659,6 @@ export default {
                       if (embedUrl) {
                           if (embedUrl.startsWith('//')) embedUrl = 'https:' + embedUrl;
                           return [{ file: embedUrl, label: "ufasofilmebi.ge", source: "ufasofilmebi.ge" }];
-                      }
-                  } catch(e) {}
-              }
-              const linksMatch = detailHtml.match(/var\s+links\s*=\s*(\{[\s\S]*?\});/);
-              if (linksMatch) {
-                  try {
-                      const lData = JSON.parse(linksMatch[1]);
-                      const k = Object.keys(lData)[0];
-                      if (k && lData[k].data && lData[k].data.length && lData[k].data[0]["1"] && lData[k].data[0]["1"].url) {
-                          const u = lData[k].data[0]["1"].url;
-                          return [{ file: u, label: "ufasofilmebi.ge", source: "ufasofilmebi.ge" }];
                       }
                   } catch(e) {}
               }
@@ -686,85 +677,24 @@ export default {
                               seasonMap[sNum].push({ episode: eNum, title: `S${sNum} E${eNum}`, url: val.data[0]["1"].url });
                           }
                       }
-                      const result = [];
-                      for (const s of Object.keys(seasonMap)) {
-                          result.push({ season: parseInt(s), episodes: seasonMap[s] });
+                      const seasons = [];
+                      for (const [sNum, eps] of Object.entries(seasonMap)) {
+                          seasons.push({ season: parseInt(sNum), episodes: eps });
                       }
-                      if (result.length) return result;
+                      return seasons;
                   } catch(e) {}
               }
           }
         }
-      } catch (e) { }
-      return [];
-    }
-
-    /* ================= adjaranetto API ================= */
-    async function searchChemikino(query, type) {
-      try {
-        const url = 'https://chemikino.com/?s=' + encodeURIComponent(query);
-        const r = await fetch(url, { headers: htmlHeaders() });
-        const html = await r.text();
-        const links = [...html.matchAll(/<a[^>]+href=["'](https?:\/\/chemikino\.com\/[^"']+)["'][^>]*>(.*?)<\/a>/gi)];
-        const results = links.map(m => {
-           const url = m[1];
-           let title = m[2].replace(/<[^>]+>/g, '').trim();
-           return { url, title };
-        }).filter(m => {
-           if (m.url === 'https://chemikino.com/') return false;
-           if (m.url.includes('/category/')) return false;
-           if (m.url.includes('/genre/')) return false;
-           if (m.title.length < 2) return false;
-           return true;
-        });
-
-        const uniqueResults = [];
-        const seenUrls = new Set();
-        for (const res of results) {
-            if (!seenUrls.has(res.url)) {
-                seenUrls.add(res.url);
-                uniqueResults.push(res);
-            }
-        }
-
-        let bestMatch = null;
-        let bestScore = -1;
-        for (const m of uniqueResults) {
-          const score = scoreTitle(query, m.title);
-          if (score > bestScore) {
-            bestScore = score;
-            bestMatch = m;
-          }
-        }
-
-        if (bestMatch && bestScore > 0.2) {
-          const pageHtml = await getText(bestMatch.url, 'https://chemikino.com/');
-          const frames = [];
-          const reI = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
-          let match;
-          while ((match = reI.exec(pageHtml)) !== null) {
-            frames.push(abs(bestMatch.url, match[1]));
-          }
-          
-          const streams = [];
-          for (const f of frames) {
-            const resolved = await resolveCandidate(f, bestMatch.url);
-            if (resolved.data && resolved.data.length) {
-              streams.push(...resolved.data);
-            }
-          }
-          
-          if (streams.length) {
-             return wrapStreams(streams, bestMatch.url);
-          }
-        }
-      } catch (e) {}
+      } catch (e) {
+        console.error("ufasofilmebi.ge search error:", e);
+      }
       return [];
     }
 
     async function searchCroconet(query, type, season, episode) {
       try {
-        const searchUrl = 'https://croconet.cam/?s=' + encodeURIComponent(query);
+        const searchUrl = 'https://croconet.cam/search?q=' + encodeURIComponent(query);
         const r = await fetch(searchUrl, { headers: htmlHeaders() });
         const html = await r.text();
         const links = [...html.matchAll(/href=["'](https?:\/\/croconet\.cam)?(\/(?:movie|show|series|serial)\/\d+\/[^"']+)["']/gi)];
@@ -809,21 +739,16 @@ export default {
           
           const cleanLinks = matches.map(m => {
               return m.replace(/\\+/g, '/').replace(/\/+/g, '/').replace(':/', '://');
-           }).filter(l => !l.includes('treiler') && !l.includes('trailer'));
+          }).filter(l => !l.includes('treiler') && !l.includes('trailer'));
           
           const uniqueLinks = [...new Set(cleanLinks)];
           
           if (type === 'series' && season !== undefined && episode !== undefined) {
-             const pattern = new RegExp(`\\/${season}_${episode}\\/ `, 'i'); // matches /1_1/
-             // also match /1-1/ or simple season/episode patterns
              const matched = uniqueLinks.find(l => l.includes(`/${season}_${episode}/`) || l.includes(`/${season}-${episode}/`));
              if (matched) {
                 return [{ file: matched, label: "Croconet.cam", rawUrl: matched, isIframe: false }];
              }
-             // Fallback to match index in list
-             // Series page might contain episodes in list order
              if (uniqueLinks.length) {
-                // If it contains series episode indices
                 const epLink = uniqueLinks.find(l => l.includes(`/${season}_`) || l.includes(`/series/`));
                 if (epLink) return [{ file: epLink, label: "Croconet.cam", rawUrl: epLink, isIframe: false }];
              }
@@ -1289,6 +1214,16 @@ export default {
         } catch (e) {}
       }
 
+      // 3.5 Try Croconet.cam
+      if (!source || source === 'Croconet.cam') {
+        try {
+          const crocoStreams = await searchCroconet(cleanQ, "movie");
+          if (crocoStreams && crocoStreams.length) {
+             allPlayers.push({ streams: crocoStreams, candidate: crocoStreams[0].file, source: "Croconet.cam" });
+          }
+        } catch (e) {}
+      }
+
       // 4. Try Imovs.ge
       if (source === 'imovs.ge' || (!source && allPlayers.length === 0)) {
         if (true) {
@@ -1647,6 +1582,28 @@ export default {
               }
           }
         }
+      }
+
+      const season = url.searchParams.get("season") ? parseInt(url.searchParams.get("season")) : undefined;
+      const episode = url.searchParams.get("episode") ? parseInt(url.searchParams.get("episode")) : undefined;
+
+      // 1.5 Try Croconet.cam
+      if (!source || source === 'Croconet.cam') {
+        try {
+          const crocoStreams = await searchCroconet(cleanQ, "series", season, episode);
+          if (crocoStreams && crocoStreams.length) {
+             episodes.push({
+               season: season || 1,
+               episode: episode || 1,
+               playerIndex: 1,
+               title: `S${season || 1} / ეპიზოდი ${episode || 1}`,
+               pageUrl: crocoStreams[0].file,
+               candidate: crocoStreams[0].file,
+               streams: crocoStreams,
+               source: "Croconet.cam"
+             });
+          }
+        } catch (err) {}
       }
 
       // 2. Try ufasofilmebi.ge
