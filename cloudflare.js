@@ -599,9 +599,10 @@ export default {
       return [];
     }
 
-    async function searchUfasofilmebi(query, type) {
+    async function searchUfasofilmebi(query, type, engQuery) {
       try {
-        const searchUrl = 'https://ufasofilmebi.ge/?s=' + encodeURIComponent(query);
+        const searchQuery = engQuery || query;
+        const searchUrl = 'https://ufasofilmebi.ge/?s=' + encodeURIComponent(searchQuery);
         const r = await fetch(searchUrl, {
           headers: { 'User-Agent': 'Mozilla/5.0' }
         });
@@ -639,7 +640,7 @@ export default {
         let bestScore = 0;
         let bestMatch = null;
         for (const res of uniqueResults) {
-           let score = scoreTitle(query, res.title);
+           let score = Math.max(scoreTitle(query, res.title), engQuery ? scoreTitle(engQuery, res.title) : 0);
            if (score > bestScore) {
              bestScore = score;
              bestMatch = res;
@@ -692,9 +693,86 @@ export default {
       return [];
     }
 
-    async function searchCroconet(query, type, season, episode) {
+    async function searchChemikino(query, type, engQuery) {
       try {
-        const searchUrl = 'https://croconet.cam/search?q=' + encodeURIComponent(query);
+        const searchQuery = engQuery || query;
+        const searchUrl = 'https://chemikino.com/index.php?do=search';
+        const bodyText = 'do=search&subaction=search&story=' + encodeURIComponent(searchQuery);
+        const r = await fetch(searchUrl, {
+          method: 'POST',
+          headers: {
+            'User-Agent': 'Mozilla/5.0',
+            'Content-Type': 'application/x-www-form-urlencoded'
+          },
+          body: bodyText
+        });
+        const html = await r.text();
+        
+        const links = [...html.matchAll(/href=["'](https?:\/\/chemikino\.com)?(\/\d+-[^"']+\.html)["']/gi)];
+        
+        const results = links.map(m => {
+           let url = m[2];
+           if (!url.startsWith('http')) url = 'https://chemikino.com' + url;
+           const slug = url.split('/').filter(Boolean).pop() || '';
+           const cleanSlug = slug.replace(/^\d+-/, '').replace('.html', '');
+           const title = cleanSlug.replace(/-/g, ' ');
+           return { url, title };
+        });
+
+        const uniqueResults = [];
+        const seenUrls = new Set();
+        for (const res of results) {
+            if (!seenUrls.has(res.url)) {
+                seenUrls.add(res.url);
+                uniqueResults.push(res);
+            }
+        }
+
+        let bestMatch = null;
+        let bestScore = -1;
+        for (const m of uniqueResults) {
+          const score = Math.max(scoreTitle(query, m.title), engQuery ? scoreTitle(engQuery, m.title) : 0);
+          if (score > bestScore) {
+            bestScore = score;
+            bestMatch = m;
+          }
+        }
+
+        if (bestMatch && bestScore > 0.2) {
+          const pageHtml = await getText(bestMatch.url, 'https://chemikino.com/');
+          const frames = [];
+          const reI = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
+          let match;
+          while ((match = reI.exec(pageHtml)) !== null) {
+             let frameUrl = match[1];
+             if (frameUrl.startsWith('//')) frameUrl = 'https:' + frameUrl;
+             if (!frameUrl.includes('google-analytics') && !frameUrl.includes('googletagmanager') && !frameUrl.includes('a-ads.com')) {
+                frames.push(frameUrl);
+             }
+          }
+          
+          const streams = [];
+          for (const f of frames) {
+            const resolved = await resolveCandidate(f, bestMatch.url);
+            if (resolved.data && resolved.data.length) {
+              streams.push(...resolved.data);
+            }
+          }
+          
+          if (streams.length) {
+             return wrapStreams(streams, bestMatch.url);
+          }
+        }
+      } catch (e) {
+        console.error("chemikino search error:", e);
+      }
+      return [];
+    }
+
+    async function searchCroconet(query, type, season, episode, engQuery) {
+      try {
+        const searchQuery = engQuery || query;
+        const searchUrl = 'https://croconet.cam/search?q=' + encodeURIComponent(searchQuery);
         const r = await fetch(searchUrl, { headers: htmlHeaders() });
         const html = await r.text();
         const links = [...html.matchAll(/href=["'](https?:\/\/croconet\.cam)?(\/(?:movie|show|series|serial)\/\d+\/[^"']+)["']/gi)];
@@ -702,7 +780,7 @@ export default {
         const results = links.map(m => {
            let url = m[2];
            if (!url.startsWith('http')) url = 'https://croconet.cam' + url;
-           const parts = url.split('/');
+           const parts = url.split('/').filter(Boolean);
            const slug = parts[parts.length - 1] || '';
            const title = slug.replace(/-/g, ' ');
            return { url, title };
@@ -725,7 +803,7 @@ export default {
         let bestMatch = null;
         let bestScore = -1;
         for (const m of uniqueResults) {
-          const score = scoreTitle(query, m.title);
+          const score = Math.max(scoreTitle(query, m.title), engQuery ? scoreTitle(engQuery, m.title) : 0);
           if (score > bestScore) {
             bestScore = score;
             bestMatch = m;
@@ -1168,7 +1246,7 @@ export default {
       // 1.5 Try Croconet.cam
       if (!source || source === 'Croconet.cam') {
         try {
-          const crocoStreams = await searchCroconet(cleanQ, "series", season, episode);
+          const crocoStreams = await searchCroconet(cleanQ, "series", season, episode, eng);
           if (crocoStreams && crocoStreams.length) {
              episodes.push({
                season: season || 1,
@@ -1187,7 +1265,7 @@ export default {
       // 2. Try ufasofilmebi.ge
       if (!source || source === 'ufasofilmebi.ge') {
         try {
-          const ufasoMovies = await searchUfasofilmebi(cleanQ, "movie");
+          const ufasoMovies = await searchUfasofilmebi(cleanQ, "movie", eng);
           if (ufasoMovies && ufasoMovies.length) {
              allPlayers.push({ streams: ufasoMovies, candidate: ufasoMovies[0].file, source: "ufasofilmebi.ge" });
           }
@@ -1197,7 +1275,7 @@ export default {
       // 3. Try chemikino.com
       if (!source || source === 'chemikino.com') {
         try {
-          const chemiStreams = await searchChemikino(cleanQ, "movie");
+          const chemiStreams = await searchChemikino(cleanQ, "movie", eng);
           if (chemiStreams && chemiStreams.length) {
              allPlayers.push({ streams: chemiStreams, candidate: chemiStreams[0].file, source: "chemikino.com" });
           }
@@ -1207,7 +1285,7 @@ export default {
       // 3.5 Try Croconet.cam
       if (!source || source === 'Croconet.cam') {
         try {
-          const crocoStreams = await searchCroconet(cleanQ, "movie");
+          const crocoStreams = await searchCroconet(cleanQ, "movie", undefined, undefined, eng);
           if (crocoStreams && crocoStreams.length) {
              allPlayers.push({ streams: crocoStreams, candidate: crocoStreams[0].file, source: "Croconet.cam" });
           }
@@ -1225,47 +1303,6 @@ export default {
       }
 
       // 4. Try Imovs.ge
-      if (source === 'imovs.ge' || (!source && allPlayers.length === 0)) {
-        if (true) {
-          const { base, html } = await strongSearch(cleanQ);
-          if (html) {
-            const candidates = pickMovieLinksFromSearch(html, base);
-            if (candidates.length) {
-              const best = await chooseBestDetail(candidates, cleanQ);
-              if (best.url) {
-                const pageUrl = best.url;
-                const page = best.page || (await getText(pageUrl, pageUrl));
-                const frames = [];
-                const reI = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
-                let m;
-                while ((m = reI.exec(page)) !== null) frames.push(abs(pageUrl, m[1]));
-
-                const buttons = [];
-                const reB = /(?:href|data-href|data-url|data-player|data-src)=["']([^"']+)["']/gi;
-                while ((m = reB.exec(page)) !== null) {
-                  const u = abs(pageUrl, m[1]);
-                  if (/(watch|player|iframe|play|embed|video)/i.test(u)) buttons.push(u);
-                }
-                const decoded = decodeBase64Blobs(page);
-                const decLinks = extractMediaLinks(decoded);
-                const toTry = uniq([...frames, ...buttons, ...decLinks]).filter(
-                  (u) => !/googletagmanager\.com|doubleclick\.net/i.test(u)
-                ).slice(0, 8);
-
-                for (const f of toTry) {
-                  const r = await resolveCandidate(f, pageUrl);
-                  const list = normalizeAndSort(r.data || []);
-                  if (list.length) {
-                    const wrapped = wrapStreams(list, f);
-                    allPlayers.push({ streams: wrapped, candidate: f, source: 'imovs.ge' });
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-
       if (allPlayers.length) {
         if (source) {
           const matchedPlayer = allPlayers.find(p => p.source === source);

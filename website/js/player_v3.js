@@ -128,9 +128,9 @@ const Player = (() => {
           const q = cleanSeriesTitle(currentInfo.title || currentInfo.name);
           let fetchUrl = '';
           if (stream.searchType === 'series') {
-            fetchUrl = `${WORKER}/imovs-series?q=${encodeURIComponent(q)}&source=${stream.label}&season=${stream.season}&episode=${stream.episode}`;
+            fetchUrl = `${WORKER}/imovs-series?q=${encodeURIComponent(q)}&eng=${encodeURIComponent(cleanSeriesTitle(currentInfo.origTitle || ''))}&source=${stream.label}&season=${stream.season}&episode=${stream.episode}`;
           } else {
-            fetchUrl = `${WORKER}/imovs?q=${encodeURIComponent(q)}&source=${stream.label}`;
+            fetchUrl = `${WORKER}/imovs?q=${encodeURIComponent(q)}&eng=${encodeURIComponent(cleanSeriesTitle(currentInfo.origTitle || ''))}&source=${stream.label}`;
           }
           
           const r = await fetchWithTimeout(fetchUrl, { timeout: 8000 });
@@ -182,7 +182,7 @@ const Player = (() => {
       
       // Sandbox bypass for trusted Google Drive files!
       const isGoogleDrive = (stream.rawUrl || stream.file || '').includes('drive.google.com');
-      const sandboxAttr = isGoogleDrive ? '' : 'sandbox="allow-scripts allow-same-origin allow-presentation allow-forms"';
+      const sandboxAttr = '';
 
       const isIframe = stream.isIframe !== undefined ? stream.isIframe : (!/\.(mp4|m3u8)$/i.test(stream.rawUrl || '') && !(stream.rawUrl || '').includes('/proxy'));
       
@@ -233,7 +233,7 @@ const Player = (() => {
           destroyHls();
           iframeWrap.style.display = 'block';
           iframeWrap.innerHTML = `
-            <iframe src="${fallbackIframeUrl}" sandbox="allow-scripts allow-same-origin allow-presentation allow-forms" allowfullscreen
+            <iframe src="${fallbackIframeUrl}" allowfullscreen
               allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
               referrerpolicy="no-referrer"
               style="width:100%;height:100%;border:none;display:block"></iframe>
@@ -270,7 +270,7 @@ const Player = (() => {
   function iframeHtml(url, label) {
     return `
       <div class="iframe-player-wrap">
-        <iframe src="${url}" sandbox="allow-scripts allow-same-origin allow-presentation allow-forms" allowfullscreen
+        <iframe src="${url}" allowfullscreen
           allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
           referrerpolicy="no-referrer"
           style="width:100%;height:100%;border:none;display:block"></iframe>
@@ -289,9 +289,7 @@ const Player = (() => {
     iframe.style.border = 'none';
     iframe.style.display = 'block';
     
-    if (useSandbox) {
-      iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-presentation allow-forms');
-    }
+    // Sandboxing disabled to allow third-party players to play correctly
     
     container.appendChild(iframe);
     
