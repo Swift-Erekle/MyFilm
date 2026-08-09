@@ -268,6 +268,16 @@ const Player = (() => {
 
   // ─── Iframe HTML ───
   function iframeHtml(url, label) {
+    if (url.includes('vidsrc') || url.includes('streamingnow.mov')) {
+      return `
+        <div class="iframe-player-wrap">
+          <div class="player-error" style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100%;background:#0a0a0f;color:#fff;text-align:center;padding:20px;">
+            <div class="pe-icon" style="font-size:48px;margin-bottom:10px;">⚠️</div>
+            <div class="pe-msg" style="font-size:18px;font-weight:bold;margin-bottom:5px;">უცხოური ფლეიერი (Vidsrc) დაიბლოკა</div>
+            <div class="pe-sub" style="font-size:14px;color:#888;">გთხოვთ აირჩიოთ სხვა ქართული წყარო სიიდან</div>
+          </div>
+        </div>`;
+    }
     return `
       <div class="iframe-player-wrap">
         <iframe src="${url}" allowfullscreen
@@ -279,6 +289,15 @@ const Player = (() => {
   }
 
     function loadIframeWithoutHistory(container, url, useSandbox, label) {
+    if (url.includes('vidsrc') || url.includes('streamingnow.mov')) {
+      container.innerHTML = `
+        <div class="player-error" style="display:flex;flex-direction:column;justify-content:center;align-items:center;height:100%;background:#0a0a0f;color:#fff;text-align:center;padding:20px;">
+          <div class="pe-icon" style="font-size:48px;margin-bottom:10px;">⚠️</div>
+          <div class="pe-msg" style="font-size:18px;font-weight:bold;margin-bottom:5px;">უცხოური ფლეიერი (Vidsrc) დაიბლოკა</div>
+          <div class="pe-sub" style="font-size:14px;color:#888;">გთხოვთ აირჩიოთ სხვა ქართული წყარო სიიდან</div>
+        </div>`;
+      return;
+    }
     container.innerHTML = '';
     const iframe = document.createElement('iframe');
     iframe.allowFullscreen = true;

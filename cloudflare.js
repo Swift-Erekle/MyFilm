@@ -746,6 +746,8 @@ export default {
           while ((match = reI.exec(pageHtml)) !== null) {
              let frameUrl = match[1];
              if (frameUrl.startsWith('//')) frameUrl = 'https:' + frameUrl;
+             if (frameUrl.includes('vidsrc')) continue; // Block vidsrc!
+             if (frameUrl.includes('vidsrc')) continue; // Block vidsrc!
              if (!frameUrl.includes('google-analytics') && !frameUrl.includes('googletagmanager') && !frameUrl.includes('a-ads.com')) {
                 frames.push(frameUrl);
              }
@@ -772,7 +774,7 @@ export default {
     async function searchCroconet(query, type, season, episode, engQuery) {
       try {
         const searchQuery = engQuery || query;
-        const searchUrl = 'https://croconet.cam/search?q=' + encodeURIComponent(searchQuery);
+        const searchUrl = 'https://croconet.cam/search/' + encodeURIComponent(searchQuery);
         const r = await fetch(searchUrl, { headers: htmlHeaders() });
         const html = await r.text();
         const links = [...html.matchAll(/href=["'](https?:\/\/croconet\.cam)?(\/(?:movie|show|series|serial)\/\d+\/[^"']+)["']/gi)];
@@ -1287,7 +1289,8 @@ export default {
         try {
           const crocoStreams = await searchCroconet(cleanQ, "movie", undefined, undefined, eng);
           if (crocoStreams && crocoStreams.length) {
-             allPlayers.push({ streams: crocoStreams, candidate: crocoStreams[0].file, source: "Croconet.cam" });
+             const wrappedCroco = wrapStreams(crocoStreams, "https://croconet.cam/");
+             allPlayers.push({ streams: wrappedCroco, candidate: wrappedCroco[0].file, source: "Croconet.cam" });
           }
         } catch (e) {}
       }
@@ -1297,7 +1300,8 @@ export default {
         try {
           const crocoStreams = await searchCroconet(cleanQ, "movie");
           if (crocoStreams && crocoStreams.length) {
-             allPlayers.push({ streams: crocoStreams, candidate: crocoStreams[0].file, source: "Croconet.cam" });
+             const wrappedCroco = wrapStreams(crocoStreams, "https://croconet.cam/");
+             allPlayers.push({ streams: wrappedCroco, candidate: wrappedCroco[0].file, source: "Croconet.cam" });
           }
         } catch (e) {}
       }

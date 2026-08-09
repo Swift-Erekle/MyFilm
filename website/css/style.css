@@ -148,8 +148,24 @@ ul   { list-style: none; }
   background: rgba(255,255,255,0.08);
 }
 
-/* Search */
-.nav-right { display: flex; align-items: center; margin-left: auto; }
+/* Search & Download */
+.nav-right { display: flex; align-items: center; gap: 12px; margin-left: auto; }
+.nav-download-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: rgba(229, 9, 20, 0.15);
+  border: 1px solid var(--accent);
+  color: var(--text-primary);
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 0.85rem; font-weight: 500;
+  white-space: nowrap;
+  transition: var(--transition);
+}
+.nav-download-btn:hover {
+  background: var(--accent);
+  box-shadow: 0 0 16px var(--accent-glow);
+  transform: translateY(-1px);
+}
 .nav-search-wrap {
   display: flex; align-items: center; gap: 8px;
   background: rgba(255,255,255,0.07);
