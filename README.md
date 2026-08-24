@@ -1,36 +1,74 @@
 # MyFilm
 
-ქართული ფილმების, სერიალებისა და ანიმეს კატალოგი მრავალწყაროიანი player-ით. Railway არის მთავარი web origin; იგივე `cloudflare.js` Cloudflare Worker-ზეც იბანდლება.
+ქართული ფილმების, სერიალების და ანიმეს კატალოგი მრავალწყაროიანი player-ით.
 
-## ლოკალური გაშვება
+## Local
 
-1. დააკოპირე `.env.example` როგორც `.env` და მიუთითე `TMDB_READ_TOKEN`.
-2. გაუშვი `npm install`.
-3. გაუშვი `npm start` და გახსენი `http://localhost:8080`.
+1. Install dependencies:
 
-TMDB token მხოლოდ server/Worker გარემოში ინახება და browser-ში არ იგზავნება.
+```bash
+npm install
+```
 
-## შემოწმება
+2. Run:
 
-- `npm run check` — JavaScript syntax.
-- `npm test` — fixture, security, SEO და Worker contract ტესტები.
-- `npm run test:browser` — desktop, mobile და TV viewport-ები.
-- `RUN_LIVE_SCRAPER_TESTS=1 npm run test:live` — რეალური provider canary-ები (PowerShell-ში ჯერ `$env:RUN_LIVE_SCRAPER_TESTS='1'`).
-- `npm run diagnose:providers -- "Avatar 2009"` — თითოეული movie provider-ის მოკლე დიაგნოსტიკა.
-- `npm run worker:dry-run` — Cloudflare bundle/config შემოწმება deploy-ის გარეშე.
+```bash
+npm start
+```
+
+3. Open:
+
+```text
+http://localhost:8080
+```
 
 ## Railway
 
-Start command არის `npm start`. გარემოში დააყენე:
+Start command:
 
-- `PUBLIC_ORIGIN=https://<railway-domain>`
-- `ALLOWED_ORIGINS=https://<railway-domain>`
-- `TMDB_READ_TOKEN=<tmdb-read-token>`
+```bash
+npm start
+```
 
-## Cloudflare Worker
+Required variable:
 
-1. `.dev.vars.example` დააკოპირე `.dev.vars`-ად მხოლოდ ლოკალური Worker-ისთვის.
-2. production secret შეიყვანე ინტერაქტიულად: `npx wrangler secret put TMDB_READ_TOKEN`.
-3. შეამოწმე `npm run worker:types` და `npm run worker:dry-run`.
+```env
+PUBLIC_ORIGIN=https://<your-railway-domain>
+```
 
-Repository-ში secret, `.env`, `.dev.vars`, test trace ან build artifact არ უნდა მოხვდეს.
+Recommended variable:
+
+```env
+ALLOWED_ORIGINS=https://<your-railway-domain>
+```
+
+TMDB works with the built-in free v3 key. No paid token is required.
+
+Optional overrides:
+
+```env
+TMDB_API_KEY=<your-free-tmdb-v3-key>
+```
+
+## Checks
+
+```bash
+npm run check
+npm test
+npm run test:browser
+```
+
+Live provider check:
+
+```powershell
+$env:RUN_LIVE_SCRAPER_TESTS='1'
+npm run test:live
+```
+
+Cloudflare dry run:
+
+```bash
+npm run worker:dry-run
+```
+
+Do not commit `.env`, `.dev.vars`, secrets, traces, or build artifacts.

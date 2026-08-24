@@ -1,5 +1,6 @@
 const BASE_TITLE = 'MyFilm — ონლაინ კინო';
 const BASE_DESCRIPTION = 'უყურე ფილმებს, სერიალებსა და ანიმეს ქართულად MyFilm-ზე.';
+const DEFAULT_TMDB_API_KEY = '8265bd1679663a7ea12ac168da84d2e8';
 
 function escapeHtml(value) {
   return String(value || '')
@@ -22,14 +23,13 @@ function routeInfo(pathname) {
 }
 
 async function tmdbDetail(route, env) {
-  const token = env.TMDB_READ_TOKEN;
-  const apiKey = env.TMDB_API_KEY;
-  if (!route || !['movie', 'tv', 'anime'].includes(route.kind) || (!token && !apiKey)) return null;
+  const apiKey = env.TMDB_API_KEY || DEFAULT_TMDB_API_KEY;
+  if (!route || !['movie', 'tv', 'anime'].includes(route.kind)) return null;
   const mediaType = route.kind === 'movie' ? 'movie' : 'tv';
   const url = new URL(`https://api.themoviedb.org/3/${mediaType}/${route.id}`);
   url.searchParams.set('language', 'ka-GE');
-  if (apiKey && !token) url.searchParams.set('api_key', apiKey);
-  const headers = token ? { Authorization: `Bearer ${token}` } : {};
+  url.searchParams.set('api_key', apiKey);
+  const headers = {};
   try {
     const response = await fetch(url, { headers, signal: AbortSignal.timeout(5_000) });
     return response.ok ? await response.json() : null;

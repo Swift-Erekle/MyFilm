@@ -31,11 +31,25 @@ test('worker blocks SSRF targets before fetching upstream', async () => {
   assert.equal(data.error, 'proxy_target_denied');
 });
 
-test('TMDB proxy requires a server-side credential', async () => {
-  const response = await worker.fetch(new Request('https://myfilm.example/api/tmdb/movie/popular'), env);
-  const data = await response.json();
-  assert.equal(response.status, 503);
-  assert.equal(data.error, 'tmdb_not_configured');
+test('TMDB proxy falls back to the built-in v3 key', async () => {
+  const originalFetch = globalThis.fetch;
+  let requestedUrl = '';
+  globalThis.fetch = async input => {
+    requestedUrl = String(input);
+    return new Response(JSON.stringify({ results: [] }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  };
+  try {
+    const response = await worker.fetch(new Request('https://myfilm.example/api/tmdb/movie/popular'), env);
+    const data = await response.json();
+    assert.equal(response.status, 200);
+    assert.deepEqual(data.results, []);
+    assert.match(requestedUrl, /api_key=8265bd1679663a7ea12ac168da84d2e8/);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
 });
 
 test('AnimeTV direct-page route rejects arbitrary hosts', async () => {

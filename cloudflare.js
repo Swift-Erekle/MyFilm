@@ -1,6 +1,8 @@
 import { extractAssignedObject, fetchWithTimeout as fetchProvider, inspectProviderHealth, parsePlayerArrays, searchExternalProvider, safeErrorCode, titleScore } from './src/providers/index.js';
 import { corsOrigin, isAllowedProxyUrl, publicOrigin } from './src/security.js';
 
+const DEFAULT_TMDB_API_KEY = '8265bd1679663a7ea12ac168da84d2e8';
+
 export default {
   async fetch(req, env = {}, ctx = { waitUntil: () => {} }) {
     const allowedCorsOrigin = corsOrigin(req, env);
@@ -88,16 +90,14 @@ export default {
       if (!/^\/(?:movie|tv|trending|discover|search|genre)\//.test(suffix)) {
         return json({ ok: false, error: 'tmdb_path_not_allowed', message: 'TMDB endpoint დაუშვებელია.' }, 400);
       }
-      const token = env.TMDB_READ_TOKEN;
-      const apiKey = env.TMDB_API_KEY;
-      if (!token && !apiKey) return json({ ok: false, error: 'tmdb_not_configured', message: 'TMDB token არ არის კონფიგურირებული.' }, 503);
+      const apiKey = env.TMDB_API_KEY || DEFAULT_TMDB_API_KEY;
       const target = new URL(`https://api.themoviedb.org/3${suffix}`);
       for (const [key, value] of url.searchParams) {
         if (!['api_key', 'token'].includes(key)) target.searchParams.append(key, value);
       }
       if (!target.searchParams.has('language')) target.searchParams.set('language', 'ka-GE');
-      if (!token) target.searchParams.set('api_key', apiKey);
-      const headers = token ? { Authorization: `Bearer ${token}`, Accept: 'application/json' } : { Accept: 'application/json' };
+      target.searchParams.set('api_key', apiKey);
+      const headers = { Accept: 'application/json' };
       const response = await fetch(target, { headers, cf: { cacheTtl: 600, cacheEverything: true } });
       const outputHeaders = new Headers({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=300, s-maxage=600', Vary: 'Origin' });
       if (allowedCorsOrigin) outputHeaders.set('Access-Control-Allow-Origin', allowedCorsOrigin);
