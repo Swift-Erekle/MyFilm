@@ -17,31 +17,80 @@ const sampleMovie = {
   similar: { results: [] },
 };
 
+const sampleTv = {
+  id: 125988,
+  name: 'Silo',
+  original_name: 'Silo',
+  media_type: 'tv',
+  overview: 'A deterministic series fixture.',
+  first_air_date: '2023-05-05',
+  backdrop_path: '/silo-backdrop.jpg',
+  poster_path: '/silo-poster.jpg',
+  vote_average: 8.1,
+  vote_count: 900,
+  episode_run_time: [50],
+  genre_ids: [18],
+  genres: [{ id: 18, name: 'Drama' }],
+  seasons: [{ season_number: 1, episode_count: 1 }],
+  similar: { results: [] },
+};
+
 async function mockApplicationApi(page) {
   await page.route('**/api/providers/status**', route => route.fulfill({
     contentType: 'application/json',
     body: JSON.stringify({ ok: true, providers: [{ id: 'ge.movie', label: 'ge.movie', healthy: true }] }),
   }));
-  await page.route('**/imovs?**', route => route.fulfill({
-    contentType: 'application/json',
-    body: JSON.stringify({
-      ok: true,
-      players: [{
-        source: 'imovs.ge',
-        streams: [{
-          label: 'imovs.ge',
-          file: 'https://myfilm.example/play?u=https%3A%2F%2Fimovs.ge%2Fembed%2Finception&ref=https%3A%2F%2Fimovs.ge',
-          rawUrl: 'https://imovs.ge/embed/inception',
-          isIframe: true,
-        }],
+  await page.route('**/imovs?**', route => {
+    const source = new URL(route.request().url()).searchParams.get('source');
+    const players = source === 'imovs.ge' ? [{
+      source: 'imovs.ge',
+      streams: [{
+        label: 'imovs.ge',
+        file: 'https://myfilm.example/play?u=https%3A%2F%2Fimovs.ge%2Fembed%2Finception&ref=https%3A%2F%2Fimovs.ge',
+        rawUrl: 'https://imovs.ge/embed/inception',
+        isIframe: true,
       }],
-    }),
+    }] : [];
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: players.length > 0, players }),
+    });
+  });
+  await page.route('**/imovs-series?**', route => {
+    const url = new URL(route.request().url());
+    const source = url.searchParams.get('source');
+    const isSelectedEpisode = url.searchParams.get('season') === '1' && url.searchParams.get('episode') === '1';
+    const available = source === 'adjaranetto.com' || (source === 'Croconet.cam' && isSelectedEpisode);
+    const episodes = available ? [{
+      season: 1,
+      episode: 1,
+      streams: [{
+        label: source,
+        source,
+        file: `https://myfilm.example/play?u=${encodeURIComponent(`https://${source}/embed/silo-s1e1`)}`,
+        rawUrl: `https://${source}/embed/silo-s1e1`,
+        isIframe: true,
+      }],
+    }] : [];
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: episodes.length > 0, episodes }),
+    });
+  });
+  await page.route('**/animeb?**', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: false, episodes: [] }),
+  }));
+  await page.route('**/animetv?**', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: false, episodes: [] }),
   }));
   await page.route('**/api/tmdb/**', route => {
     const url = new URL(route.request().url());
     let body;
     if (/\/genre\/(?:movie|tv)\/list$/.test(url.pathname)) body = { genres: [{ id: 28, name: 'Action' }] };
     else if (/\/movie\/27205$/.test(url.pathname)) body = sampleMovie;
+    else if (/\/tv\/125988$/.test(url.pathname)) body = sampleTv;
     else body = { page: 1, results: [sampleMovie], total_pages: 1, total_results: 1 };
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
   });
@@ -76,6 +125,13 @@ test('a direct clean detail URL loads SPA assets from the site root', async ({ p
   const playerFrame = page.locator('.iframe-player-wrap iframe');
   await expect(playerFrame).toHaveAttribute('sandbox', /allow-scripts/);
   await expect(page.locator('#quality-select option')).toHaveText(['ge.movie', 'imovs.ge']);
+});
+
+test('a selected series episode adds only providers that return that episode', async ({ page }) => {
+  await mockApplicationApi(page);
+  await page.goto('/tv/125988');
+  await expect(page.locator('.detail-title')).toHaveText('Silo');
+  await expect(page.locator('#quality-select option')).toHaveText(['ge.movie', 'adjaranetto.com', 'Croconet.cam']);
 });
 
 test('cards expose keyboard link semantics when content is rendered', async ({ page }) => {

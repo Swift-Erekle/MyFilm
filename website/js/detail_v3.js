@@ -347,7 +347,7 @@ const DetailView = (() => {
                      targetBtn.click();
                  } else {
                      currentEpIdx = nextEp._idx;
-                     Player.loadEpisode('player-container', nextEp.streams, playNext, tmdbId);
+                     Player.loadEpisode('player-container', nextEp.streams, playNext, nextEp);
                      updateNowPlaying(currentEpIdx);
                  }
                  return true; // handled
@@ -355,7 +355,7 @@ const DetailView = (() => {
              return false; // no more players
           };
 
-          Player.loadEpisode('player-container', ep.streams, playNext, tmdbId);
+          Player.loadEpisode('player-container', ep.streams, playNext, ep);
           updateNowPlaying(ep._idx);
           document.getElementById('burger-panel')?.classList.remove('open');
           

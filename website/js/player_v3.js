@@ -11,7 +11,26 @@ const Player = (() => {
   const WORKER  = window.location.origin; // For Railway deploy. Change to 'https://adjara-proxy.erekleburjanadze.workers.dev' to use Cloudflare Worker
   const LUMEX   = 'https://api.lumex.space/';
   const LSUFFIX = 'clientId=CWfKXLc1ajId&domain=movielab.one&url=movielab.one';
+  const MOVIE_SCRAPERS = [
+    'adjaranetto.com',
+    'Croconet.cam',
+    'ufasofilmebi.ge',
+    'chemikino.com',
+    'imovs.ge',
+    'asia.com.ge',
+    'geofilms.net',
+    'kinolab.cc',
+    'geosaitebi.tv',
+  ];
+  const SERIES_SCRAPERS = [
+    'adjaranetto.com',
+    'Croconet.cam',
+    'ufasofilmebi.ge',
+    'imovs.ge',
+  ];
+  const PROVIDER_REQUEST_TIMEOUT = 22000;
   let currentInfo = null;
+  let episodeLoadToken = 0;
   let providerHealthCache = { expiresAt: 0, byType: new Map() };
 
   async function fetchWithTimeout(resource, options = {}) {
@@ -70,6 +89,42 @@ const Player = (() => {
       .filter(ep => ep.streams.length);
     if (episodes && episodes.overview) list.overview = episodes.overview;
     return list;
+  }
+
+  function streamForProvider(streams, provider) {
+    const stream = realStreams(streams)[0];
+    return stream ? { ...stream, label: provider, source: provider } : null;
+  }
+
+  function mergeEpisodeGroups(groups) {
+    const episodeMap = new Map();
+    let overview = '';
+
+    for (const group of groups || []) {
+      if (!group) continue;
+      if (!overview && group.overview) overview = group.overview;
+      for (const episode of group) {
+        const season = Number(episode.season) || 1;
+        const episodeNumber = Number(episode.episode) || 1;
+        const key = `${season}-${episodeNumber}`;
+        if (!episodeMap.has(key)) {
+          episodeMap.set(key, {
+            ...episode,
+            season,
+            episode: episodeNumber,
+            streams: [],
+          });
+        }
+        episodeMap.get(key).streams.push(...realStreams(episode.streams));
+      }
+    }
+
+    const merged = [...episodeMap.values()]
+      .map(episode => ({ ...episode, streams: realStreams(episode.streams) }))
+      .filter(episode => episode.streams.length)
+      .sort((a, b) => a.season - b.season || a.episode - b.episode);
+    if (overview) merged.overview = overview;
+    return merged;
   }
 
   function htmlEscape(value) {
@@ -492,33 +547,38 @@ function hasCJK(str) {
 
   async function tryWorkerMovie(info) {
     const queries = buildQueries(info);
-    
-    let result = null;
-    for (const q of queries) {
-      setStatus(`🔍 ძიება: ${q}...`);
-      try {
-        const r = await fetchWithTimeout(`${WORKER}/imovs?q=${encodeURIComponent(q)}`, { timeout: 6000 });
-        const d = await r.json();
-        if (d?.players?.length) { result = d.players; break; }
-        if (d?.data?.length) { result = [{ streams: d.data }]; break; }
-      } catch { /* try the next normalized title */ }
-    }
-    
-    if (info.tmdbId) {
-      result = result || [{ streams: [] }];
-      const geMovieStream = { isIframe: true, file: `https://em.filmx.my/play/?type=movie&id=${info.tmdbId}&lang=ka`, rawUrl: `https://em.filmx.my/play/?type=movie&id=${info.tmdbId}&lang=ka`, label: "ge.movie" };
-      if (result.length > 0 && result[0].streams) {
-        result[0].streams.unshift(geMovieStream);
-      } else if (result.length > 0 && result[0].file) {
-        result.unshift(geMovieStream);
+    const englishTitle = cleanSeriesTitle(info.origTitle || info.title || '');
+    setStatus(`🔍 ${MOVIE_SCRAPERS.length} ქართულ წყაროზე ძიება...`);
+
+    const found = await Promise.all(MOVIE_SCRAPERS.map(async provider => {
+      for (const q of queries) {
+        try {
+          const endpoint = new URL(`${WORKER}/imovs`);
+          endpoint.searchParams.set('q', q);
+          endpoint.searchParams.set('eng', englishTitle);
+          endpoint.searchParams.set('source', provider);
+          const response = await fetchWithTimeout(endpoint, { timeout: PROVIDER_REQUEST_TIMEOUT });
+          if (!response.ok) continue;
+          const data = await response.json();
+          const player = data?.players?.find(candidate => candidate.source?.toLowerCase() === provider.toLowerCase())
+            || data?.players?.[0];
+          const stream = streamForProvider(player?.streams || data?.data, provider);
+          if (stream) return stream;
+        } catch (error) {
+          console.debug(`Provider unavailable: ${provider}`, error);
+        }
       }
-    }
-    
-    if (result?.length && result[0].streams) {
-      result[0].streams = realStreams(result[0].streams);
+      return null;
+    }));
+
+    const streams = found.filter(Boolean);
+    if (info.tmdbId) {
+      const geMovieStream = { isIframe: true, file: `https://em.filmx.my/play/?type=movie&id=${info.tmdbId}&lang=ka`, rawUrl: `https://em.filmx.my/play/?type=movie&id=${info.tmdbId}&lang=ka`, label: "ge.movie" };
+      streams.unshift(geMovieStream);
     }
 
-    return result;
+    const normalized = realStreams(streams);
+    return normalized.length ? [{ streams: normalized }] : null;
   }
 
   async function tryWorkerSeries(info) {
@@ -537,32 +597,45 @@ function hasCJK(str) {
     }
 
     const queries = buildQueries(info);
-    
-    let result = null;
-    for (const q of queries) {
-      setStatus(`🔍 სერიალის ძიება: ${q}...`);
-      try {
-        const r = await fetchWithTimeout(`${WORKER}/imovs-series?q=${encodeURIComponent(q)}`, { timeout: 6000 });
-        const d = await r.json();
-        if (d?.episodes?.length) { result = realEpisodes(d.episodes); break; }
-      } catch { /* try the next title/provider */ }
-      
-      setStatus(`🔍 ანიმეს ძიება: ${q}...`);
-      try {
-        const ra = await fetchWithTimeout(`${WORKER}/animeb?q=${encodeURIComponent(q)}`, { timeout: 6000 });
-        const da = await ra.json();
-        if (da?.episodes?.length) { result = realEpisodes(da.episodes); break; }
-      } catch { /* AnimeB may not carry this title */ }
+    const englishTitle = cleanSeriesTitle(info.origTitle || info.title || '');
+    const scraperIds = [...SERIES_SCRAPERS, 'animeb.ge', 'animetv.ge'];
+    setStatus(`🔍 ${scraperIds.length} ქართულ წყაროზე ძიება...`);
 
-      setStatus(`🔍 animetv.ge ძიება: ${q}...`);
-      try {
-        const rat = await fetchWithTimeout(`${WORKER}/animetv?q=${encodeURIComponent(q)}`, { timeout: 6000 });
-        const dat = await rat.json();
-        if (dat?.episodes?.length) { result = realEpisodes(dat.episodes); break; }
-      } catch { /* AnimeTV may not carry this title */ }
-    }
+    const groups = await Promise.all(scraperIds.map(async provider => {
+      for (const q of queries) {
+        try {
+          let endpoint;
+          if (provider === 'animeb.ge') {
+            endpoint = new URL(`${WORKER}/animeb`);
+          } else if (provider === 'animetv.ge') {
+            endpoint = new URL(`${WORKER}/animetv`);
+          } else {
+            endpoint = new URL(`${WORKER}/imovs-series`);
+            endpoint.searchParams.set('eng', englishTitle);
+            endpoint.searchParams.set('source', provider);
+          }
+          endpoint.searchParams.set('q', q);
+          const response = await fetchWithTimeout(endpoint, { timeout: PROVIDER_REQUEST_TIMEOUT });
+          if (!response.ok) continue;
+          const data = await response.json();
+          if (!data?.episodes?.length) continue;
 
-    if (result && info.tmdbId) {
+          const episodes = data.episodes.map(episode => {
+            const stream = streamForProvider(episode.streams, provider);
+            return { ...episode, streams: stream ? [stream] : [] };
+          }).filter(episode => episode.streams.length);
+          if (data.overview) episodes.overview = data.overview;
+          if (episodes.length) return episodes;
+        } catch (error) {
+          console.debug(`Provider unavailable: ${provider}`, error);
+        }
+      }
+      return null;
+    }));
+
+    let result = mergeEpisodeGroups(groups);
+
+    if (result.length && info.tmdbId) {
       result.forEach(ep => {
         const geMovieStream = { isIframe: true, file: `https://em.filmx.my/play/?type=serial&id=${info.tmdbId}&name=serial&season=${ep.season}&episode=${ep.episode}&lang=ka`, rawUrl: `https://em.filmx.my/play/?type=serial&id=${info.tmdbId}&name=serial&season=${ep.season}&episode=${ep.episode}&lang=ka`, label: "ge.movie" };
         if (ep.streams) {
@@ -573,7 +646,46 @@ function hasCJK(str) {
       });
     }
 
-    return realEpisodes(result);
+    return mergeEpisodeGroups([result]);
+  }
+
+  async function discoverEpisodeStreams(episodeInfo, existingStreams) {
+    if (!episodeInfo || currentInfo?.animetv_url) return realStreams(existingStreams);
+
+    const existing = realStreams(existingStreams);
+    const existingProviders = new Set(existing.map(stream => String(stream.source || stream.label || '').toLowerCase()));
+    const missingProviders = SERIES_SCRAPERS.filter(provider => !existingProviders.has(provider.toLowerCase()));
+    if (!missingProviders.length) return existing;
+
+    const queries = buildQueries(currentInfo || {});
+    const englishTitle = cleanSeriesTitle(currentInfo?.origTitle || currentInfo?.title || '');
+    const discovered = await Promise.all(missingProviders.map(async provider => {
+      for (const q of queries) {
+        try {
+          const endpoint = new URL(`${WORKER}/imovs-series`);
+          endpoint.searchParams.set('q', q);
+          endpoint.searchParams.set('eng', englishTitle);
+          endpoint.searchParams.set('source', provider);
+          endpoint.searchParams.set('season', episodeInfo.season);
+          endpoint.searchParams.set('episode', episodeInfo.episode);
+          const response = await fetchWithTimeout(endpoint, { timeout: PROVIDER_REQUEST_TIMEOUT });
+          if (!response.ok) continue;
+          const data = await response.json();
+          const episode = data?.episodes?.find(candidate =>
+            Number(candidate.season) === Number(episodeInfo.season)
+            && Number(candidate.episode) === Number(episodeInfo.episode));
+          const stream = streamForProvider(episode?.streams, provider);
+          if (stream) return stream;
+        } catch (error) {
+          console.debug(`Episode provider unavailable: ${provider}`, error);
+        }
+      }
+      return null;
+    }));
+
+    const streams = realStreams([...existing, ...discovered.filter(Boolean)]);
+    episodeInfo.streams = streams;
+    return streams;
   }
 
   // ══════════════════════════════════════════
@@ -637,13 +749,18 @@ function hasCJK(str) {
   }
 
   // Load episode from worker episodes array
-  async function loadEpisode(containerId, streams, onErrorFallback) {
+  async function loadEpisode(containerId, streams, onErrorFallback, episodeInfo) {
     const el = document.getElementById(containerId);
     if (!el) return;
-    await renderNative(el, realStreams(streams), onErrorFallback);
+    const loadToken = ++episodeLoadToken;
+    el.innerHTML = loadingHtml('ქართული წყაროები მოწმდება...');
+    const discovered = await discoverEpisodeStreams(episodeInfo, streams);
+    if (loadToken !== episodeLoadToken) return;
+    await renderNative(el, discovered, onErrorFallback);
   }
 
   function destroy() {
+    episodeLoadToken += 1;
     destroyHls();
     const v = document.getElementById('main-video');
     if (v) { v.pause(); v.removeAttribute('src'); v.load(); }
