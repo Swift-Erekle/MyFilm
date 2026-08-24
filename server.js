@@ -14,7 +14,7 @@ const indexPath = path.join(websiteDirectory, 'index.html');
 const port = Number(process.env.PORT || 8080);
 const workerEndpoints = new Set([
   '/imovs', '/imovs-series', '/animeb', '/animes', '/animetv', '/animetv_page',
-  '/play', '/hls', '/hlsseg', '/hlskey', '/api/providers/status',
+  '/play', '/hls', '/hlsseg', '/hlskey', '/api/providers/status', '/api/ge-movie/status',
 ]);
 
 app.disable('x-powered-by');

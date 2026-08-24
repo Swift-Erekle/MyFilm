@@ -84,6 +84,58 @@ export default {
       return response;
     }
 
+    if (url.pathname === '/api/ge-movie/status') {
+      if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405);
+      const type = url.searchParams.get('type');
+      const id = url.searchParams.get('id') || '';
+      const season = Number(url.searchParams.get('season') || 1);
+      const episode = Number(url.searchParams.get('episode') || 1);
+      if (!['movie', 'tv'].includes(type) || !/^\d{1,10}$/.test(id) || season < 1 || episode < 1) {
+        return json({ ok: false, available: false, provider: 'ge.movie', error: 'invalid_request' }, 400);
+      }
+
+      try {
+        const upstream = new URL('https://em.filmx.my/file/play');
+        upstream.searchParams.set('type', type === 'tv' ? 'serial' : 'movie');
+        upstream.searchParams.set('id', id);
+        upstream.searchParams.set('name', type === 'tv' ? 'serial' : '1');
+        upstream.searchParams.set('lang', 'ka');
+        upstream.searchParams.set('p', 'l.playlist');
+        const response = await fetchProvider(upstream, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0',
+            Accept: 'application/json',
+            Referer: 'https://em.filmx.my/',
+          },
+        }, { timeoutMs: 7_000 });
+        if (!response.ok) {
+          return json({ ok: true, available: false, provider: 'ge.movie' }, 200, { 'Cache-Control': 'public, max-age=120, s-maxage=300' });
+        }
+
+        const payload = await response.json();
+        let available = false;
+        if (type === 'movie') {
+          available = Array.isArray(payload) && payload.some(item => typeof item?.file === 'string' && /https?:\/\//i.test(item.file));
+        } else {
+          const episodeId = `${season}-${episode}`;
+          const stack = Array.isArray(payload) ? [...payload] : [payload];
+          while (stack.length && !available) {
+            const item = stack.pop();
+            if (!item || typeof item !== 'object') continue;
+            if (String(item.id || '') === episodeId && typeof item.file === 'string' && /https?:\/\//i.test(item.file)) {
+              available = true;
+              break;
+            }
+            if (Array.isArray(item.folder)) stack.push(...item.folder);
+          }
+        }
+        return json({ ok: true, available, provider: 'ge.movie' }, 200, { 'Cache-Control': 'public, max-age=120, s-maxage=300' });
+      } catch (error) {
+        console.error(JSON.stringify({ message: 'ge_movie_status_failed', error: error instanceof Error ? error.message : String(error) }));
+        return json({ ok: false, available: false, provider: 'ge.movie', error: 'provider_failed' }, 502);
+      }
+    }
+
     if (url.pathname.startsWith('/api/tmdb/')) {
       if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405);
       const suffix = url.pathname.slice('/api/tmdb'.length);
@@ -358,9 +410,13 @@ export default {
 
     function extractYearFromUrl(u) {
       try {
-        const p = new URL(u).pathname;
-        const m = p.match(/(?:-|\/)((?:19|20)\d{2})(?:-|\/|\.html)/);
-        return m ? m[1] : "";
+        const segments = new URL(u).pathname.split('/').filter(Boolean);
+        for (const segment of segments) {
+          if (/^\d+$/.test(segment)) continue;
+          const match = segment.match(/(?:^|[-_])((?:19|20)\d{2})(?:[-_.]|$)/);
+          if (match) return match[1];
+        }
+        return "";
       } catch {
         return "";
       }
@@ -665,7 +721,7 @@ export default {
       }
     }
 
-    async function searchUfasofilmebi(query, type, engQuery) {
+    async function searchUfasofilmebi(query, type, engQuery, wantedYear) {
       try {
         const searchQuery = engQuery || query;
         const searchUrl = 'https://ufasofilmebi.ge/?s=' + encodeURIComponent(searchQuery);
@@ -705,7 +761,9 @@ export default {
 
         let bestScore = 0;
         let bestMatch = null;
-        for (const res of uniqueResults) {
+         for (const res of uniqueResults) {
+           const candidateYear = extractYearFromStr(res.title) || extractYearFromUrl(res.url);
+           if (wantedYear && candidateYear && candidateYear !== wantedYear) continue;
            let score = Math.max(scoreTitle(query, res.title), engQuery ? scoreTitle(engQuery, res.title) : 0);
            if (score > bestScore) {
              bestScore = score;
@@ -716,6 +774,8 @@ export default {
         if (bestMatch && bestScore > 0.2) {
           const detailR = await fetchProvider(bestMatch.url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, { timeoutMs: 10_000 });
           const detailHtml = await detailR.text();
+          const detailYear = extractYearFromStr(pickTitle(detailHtml)) || extractYearFromUrl(bestMatch.url);
+          if (wantedYear && detailYear && detailYear !== wantedYear) return [];
           
           if (type === 'movie') {
               const serversMatch = detailHtml.match(/var\s+Servers\s*=\s*(\{[\s\S]*?\});/);
@@ -763,7 +823,7 @@ export default {
       return [];
     }
 
-    async function searchChemikino(query, type, engQuery) {
+    async function searchChemikino(query, type, engQuery, wantedYear) {
       try {
         const searchQuery = engQuery || query;
         const searchUrl = 'https://chemikino.com/index.php?do=search';
@@ -798,18 +858,20 @@ export default {
             }
         }
 
-        let bestMatch = null;
-        let bestScore = -1;
+        const rankedResults = [];
         for (const m of uniqueResults) {
+          const candidateYear = extractYearFromStr(m.title) || extractYearFromUrl(m.url);
+          if (wantedYear && candidateYear && candidateYear !== wantedYear) continue;
           const score = Math.max(scoreTitle(query, m.title), engQuery ? scoreTitle(engQuery, m.title) : 0);
-          if (score > bestScore) {
-            bestScore = score;
-            bestMatch = m;
-          }
+          if (score > 0.2) rankedResults.push({ ...m, score });
         }
+        rankedResults.sort((a, b) => b.score - a.score);
 
-        if (bestMatch && bestScore > 0.2) {
+        for (const bestMatch of rankedResults.slice(0, 8)) {
           const pageHtml = await getText(bestMatch.url, 'https://chemikino.com/');
+          if (!pageHtml) continue;
+          const detailYear = extractYearFromStr(pickTitle(pageHtml)) || extractYearFromUrl(bestMatch.url);
+          if (wantedYear && detailYear && detailYear !== wantedYear) continue;
           const frames = [];
           const reI = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
           let match;
@@ -831,9 +893,9 @@ export default {
             }
           }
           
-          if (streams.length) {
-             return wrapStreams(streams, bestMatch.url);
-          }
+           if (streams.length) {
+              return wrapStreams(streams, bestMatch.url);
+           }
         }
       } catch (e) {
         console.error("chemikino search error:", e);
@@ -841,7 +903,7 @@ export default {
       return [];
     }
 
-    async function searchCroconet(query, type, season, episode, engQuery) {
+    async function searchCroconet(query, type, season, episode, engQuery, wantedYear) {
       try {
         const searchQuery = engQuery || query;
         const searchUrl = 'https://croconet.cam/search/' + encodeURIComponent(searchQuery);
@@ -875,6 +937,8 @@ export default {
         let bestMatch = null;
         let bestScore = -1;
         for (const m of uniqueResults) {
+          const candidateYear = extractYearFromStr(m.title) || extractYearFromUrl(m.url);
+          if (wantedYear && candidateYear && candidateYear !== wantedYear) continue;
           const score = Math.max(scoreTitle(query, m.title), engQuery ? scoreTitle(engQuery, m.title) : 0);
           if (score > bestScore) {
             bestScore = score;
@@ -904,9 +968,21 @@ export default {
              }
           } else {
              if (uniqueLinks.length) {
-                return [{ file: uniqueLinks[0], label: "Croconet.cam", rawUrl: uniqueLinks[0], isIframe: false }];
+                const normalizedQuery = normTitle(engQuery || query).replace(/\s+/g, '_');
+                const titleAndYearMatched = wantedYear
+                  ? uniqueLinks.find(link => extractYearFromStr(link) === wantedYear && normTitle(link).replace(/\s+/g, '_').includes(normalizedQuery))
+                  : null;
+                const yearMatched = wantedYear
+                  ? uniqueLinks.find(link => extractYearFromStr(link) === wantedYear)
+                  : null;
+                const titleMatched = uniqueLinks.find(link => normTitle(link).replace(/\s+/g, '_').includes(normalizedQuery));
+                const selected = titleAndYearMatched || titleMatched || yearMatched || (!wantedYear ? uniqueLinks[0] : null);
+                if (selected) return [{ file: selected, label: "Croconet.cam", rawUrl: selected, isIframe: false }];
              }
+             console.error(JSON.stringify({ message: 'provider_stream_match_failed', provider: 'Croconet.cam', query, wantedYear: wantedYear || null, candidates: uniqueLinks.length }));
           }
+        } else {
+          console.error(JSON.stringify({ message: 'provider_title_match_failed', provider: 'Croconet.cam', query, wantedYear: wantedYear || null, candidates: uniqueResults.length }));
         }
       } catch (e) {
         console.error("Croconet search error:", e);
@@ -1316,7 +1392,7 @@ export default {
       // 2. Try ufasofilmebi.ge
       if (!source || source === 'ufasofilmebi.ge') {
         try {
-          const ufasoMovies = await searchUfasofilmebi(cleanQ, "movie", qEng);
+          const ufasoMovies = await searchUfasofilmebi(cleanQ, "movie", qEng, wantYear);
           if (ufasoMovies && ufasoMovies.length) {
              allPlayers.push({ streams: ufasoMovies, candidate: ufasoMovies[0].file, source: "ufasofilmebi.ge" });
            }
@@ -1328,7 +1404,7 @@ export default {
       // 3. Try chemikino.com
       if (!source || source === 'chemikino.com') {
         try {
-          const chemiStreams = await searchChemikino(cleanQ, "movie", qEng);
+          const chemiStreams = await searchChemikino(cleanQ, "movie", qEng, wantYear);
           if (chemiStreams && chemiStreams.length) {
              allPlayers.push({ streams: chemiStreams, candidate: chemiStreams[0].file, source: "chemikino.com" });
           }
@@ -1340,7 +1416,7 @@ export default {
       // 3.5 Try Croconet.cam
       if (!source || source === 'Croconet.cam') {
         try {
-          const crocoStreams = await searchCroconet(cleanQ, "movie", undefined, undefined, qEng);
+          const crocoStreams = await searchCroconet(cleanQ, "movie", undefined, undefined, qEng, wantYear);
           if (crocoStreams && crocoStreams.length) {
              const wrappedCroco = wrapStreams(crocoStreams, "https://croconet.cam/");
              allPlayers.push({ streams: wrappedCroco, candidate: wrappedCroco[0].file, source: "Croconet.cam" });
@@ -1355,7 +1431,7 @@ export default {
       for (const providerId of genericProviderIds) {
         if (source && source !== providerId) continue;
         try {
-          const streams = await searchExternalProvider(providerId, { query: cleanQ, engQuery: qEng, geoQuery: qGeo, type: 'movie' });
+          const streams = await searchExternalProvider(providerId, { query: q, engQuery: qEng, geoQuery: qGeo, type: 'movie', year: wantYear });
           if (streams.length) {
             const wrapped = wrapStreams(streams, `https://${providerId}/`);
             allPlayers.push({ streams: wrapped, candidate: wrapped[0].file, source: providerId });
@@ -1663,7 +1739,7 @@ export default {
       // 1.5 Try Croconet.cam
       if (!source || source === 'Croconet.cam') {
         try {
-          const crocoStreams = await searchCroconet(cleanQ, "series", season, episode, qEng);
+          const crocoStreams = await searchCroconet(cleanQ, "series", season, episode, qEng, wantYear);
           if (crocoStreams && crocoStreams.length) {
              episodes.push({
                season: season || 1,
@@ -1684,7 +1760,7 @@ export default {
       // 2. Try ufasofilmebi.ge
       if (!source || source === 'ufasofilmebi.ge') {
         try {
-          const ufasoSeries = await searchUfasofilmebi(cleanQ, "series", qEng);
+          const ufasoSeries = await searchUfasofilmebi(cleanQ, "series", qEng, wantYear);
           if (ufasoSeries && ufasoSeries.length) {
             for (const s of ufasoSeries) {
               for (const e of s.episodes) {
@@ -1714,7 +1790,7 @@ export default {
       // 3. Try chemikino.com
       if (!source || source === 'chemikino.com') {
         try {
-          const chemiSeries = await searchChemikino(cleanQ, "series", qEng);
+          const chemiSeries = await searchChemikino(cleanQ, "series", qEng, wantYear);
           if (chemiSeries && chemiSeries.length) {
             episodes.push({
               season: season || 1,
@@ -1736,7 +1812,7 @@ export default {
       for (const providerId of seriesGenericProviderIds) {
         if (source && source !== providerId) continue;
         try {
-          const streams = await searchExternalProvider(providerId, { query: cleanQ, engQuery: qEng, geoQuery: qGeo, type: 'tv', season, episode });
+          const streams = await searchExternalProvider(providerId, { query, engQuery: qEng, geoQuery: qGeo, type: 'tv', season, episode, year: wantYear });
           if (streams.length) {
             episodes.push({
               season: season || 1,

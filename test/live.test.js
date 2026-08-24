@@ -52,7 +52,7 @@ test('live: every movie provider returns a matching playable candidate', { skip:
   const canaries = {
     'adjaranetto.com': 'Inception 2010',
     'Croconet.cam': 'Inception 2010',
-    'ufasofilmebi.ge': 'Avatar 2009',
+    'ufasofilmebi.ge': 'Avatar 2 2022',
     'chemikino.com': 'Avatar 2009',
     'imovs.ge': 'Avatar 2009',
     'asia.com.ge': 'Squid Game',

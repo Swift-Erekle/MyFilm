@@ -27,8 +27,14 @@ function detailCandidates(html, provider) {
   return [...new Map(candidates.map(candidate => [candidate.url, candidate])).values()];
 }
 
+function extractYear(value) {
+  const match = String(value || '').match(/\b((?:19|20)\d{2})\b/);
+  return match ? Number(match[1]) : null;
+}
+
 export async function searchGenericProvider(provider, context) {
   const queries = [...new Set([context.query, context.engQuery, context.geoQuery].filter(Boolean))];
+  const wantedYear = Number(context.year) || null;
   const candidates = [];
 
   for (const query of queries) {
@@ -43,20 +49,35 @@ export async function searchGenericProvider(provider, context) {
       timeoutMs: 9_000,
     });
     candidates.push(...detailCandidates(text, provider));
-    if (candidates.length) break;
   }
 
-  const best = bestTitleCandidate(candidates, queries, 0.25);
-  if (!best) return [];
-  const { text, finalUrl } = await fetchHtml(best.url, { referer: provider.baseUrl, timeoutMs: 10_000 });
-  const pageTitle = (text.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || best.title;
-  if (Math.max(...queries.map(query => normalizeTitle(pageTitle).includes(normalizeTitle(query)) ? 1 : 0)) === 0 && best.score < 0.45) return [];
+  const remaining = [...new Map(candidates.map(candidate => [candidate.url, candidate])).values()]
+    .filter(candidate => !wantedYear || !extractYear(candidate.title) || extractYear(candidate.title) === wantedYear);
 
-  return extractPlayerUrls(text, finalUrl).map((url, index) => ({
-    file: url,
-    rawUrl: url,
-    label: `${provider.label} ${index + 1}`,
-    source: provider.id,
-    isIframe: !/\.(?:m3u8|mp4)(?:\?|$)/i.test(url),
-  }));
+  for (let attempt = 0; attempt < 8 && remaining.length; attempt += 1) {
+    const best = bestTitleCandidate(remaining, queries, 0.25);
+    if (!best) break;
+    const candidateIndex = remaining.findIndex(candidate => candidate.url === best.url);
+    if (candidateIndex !== -1) remaining.splice(candidateIndex, 1);
+
+    try {
+      const { text, finalUrl } = await fetchHtml(best.url, { referer: provider.baseUrl, timeoutMs: 10_000 });
+      const pageTitle = (text.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || best.title;
+      const pageYear = extractYear(pageTitle);
+      if (wantedYear && pageYear && pageYear !== wantedYear) continue;
+      if (Math.max(...queries.map(query => normalizeTitle(pageTitle).includes(normalizeTitle(query)) ? 1 : 0)) === 0 && best.score < 0.45) continue;
+
+      const playerUrls = extractPlayerUrls(text, finalUrl);
+      if (!playerUrls.length) continue;
+      return playerUrls.map((url, index) => ({
+        file: url,
+        rawUrl: url,
+        label: `${provider.label} ${index + 1}`,
+        source: provider.id,
+        isIframe: !/\.(?:m3u8|mp4)(?:\?|$)/i.test(url),
+      }));
+    } catch { /* try the next matching detail candidate */ }
+  }
+
+  return [];
 }

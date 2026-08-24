@@ -32,6 +32,7 @@ const Player = (() => {
   let currentInfo = null;
   let episodeLoadToken = 0;
   let providerHealthCache = { expiresAt: 0, byType: new Map() };
+  const geMovieAvailabilityCache = new Map();
 
   async function fetchWithTimeout(resource, options = {}) {
     const { timeout = 12000 } = options;
@@ -47,6 +48,41 @@ const Player = (() => {
     } catch (error) {
       clearTimeout(id);
       throw error;
+    }
+  }
+
+  function buildGeMovieStream(info, episodeInfo = null) {
+    const isSeries = info?.type === 'tv' || episodeInfo;
+    const rawUrl = isSeries
+      ? `https://em.filmx.my/play/?type=serial&id=${info.tmdbId}&name=serial&season=${episodeInfo?.season || 1}&episode=${episodeInfo?.episode || 1}&lang=ka`
+      : `https://em.filmx.my/play/?type=movie&id=${info.tmdbId}&lang=ka`;
+    return { isIframe: true, file: rawUrl, rawUrl, label: 'ge.movie', source: 'ge.movie' };
+  }
+
+  async function hasGeMovie(info, episodeInfo = null) {
+    if (!info?.tmdbId) return false;
+    const type = info.type === 'tv' || episodeInfo ? 'tv' : 'movie';
+    const season = Number(episodeInfo?.season || 1);
+    const episode = Number(episodeInfo?.episode || 1);
+    const cacheKey = `${type}:${info.tmdbId}:${season}:${episode}`;
+    if (geMovieAvailabilityCache.has(cacheKey)) return geMovieAvailabilityCache.get(cacheKey);
+
+    try {
+      const endpoint = new URL(`${WORKER}/api/ge-movie/status`);
+      endpoint.searchParams.set('type', type);
+      endpoint.searchParams.set('id', info.tmdbId);
+      if (type === 'tv') {
+        endpoint.searchParams.set('season', season);
+        endpoint.searchParams.set('episode', episode);
+      }
+      const response = await fetchWithTimeout(endpoint, { timeout: 9000 });
+      const data = await response.json();
+      const available = response.ok && data?.ok === true && data?.available === true;
+      geMovieAvailabilityCache.set(cacheKey, available);
+      return available;
+    } catch {
+      geMovieAvailabilityCache.set(cacheKey, false);
+      return false;
     }
   }
 
@@ -71,15 +107,29 @@ const Player = (() => {
   }
 
   function realStreams(streams) {
-    const seen = new Set();
-    return (streams || []).filter(stream => {
+    const seenProviders = new Set();
+    const seenUrls = new Set();
+    const filtered = (streams || []).filter(stream => {
       if (!stream || stream.isPlaceholder) return false;
       const url = stream.file || stream.rawUrl;
       if (!url) return false;
-      const key = `${stream.label || ''}|${url}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
+      const provider = String(stream.source || stream.label || '').trim().toLowerCase();
+      let canonicalUrl = String(stream.rawUrl || stream.file || '').replace(/&amp;/gi, '&');
+      try {
+        const parsed = new URL(stream.file || '', WORKER);
+        if (parsed.origin === new URL(WORKER).origin && /^\/(?:play|hls)$/.test(parsed.pathname) && parsed.searchParams.get('u')) {
+          canonicalUrl = parsed.searchParams.get('u');
+        }
+      } catch { /* the raw string remains the deduplication key */ }
+      if ((provider && seenProviders.has(provider)) || seenUrls.has(canonicalUrl)) return false;
+      if (provider) seenProviders.add(provider);
+      seenUrls.add(canonicalUrl);
       return true;
+    });
+    return filtered.sort((a, b) => {
+      const aIsGeMovie = String(a.source || a.label || '').toLowerCase() === 'ge.movie';
+      const bIsGeMovie = String(b.source || b.label || '').toLowerCase() === 'ge.movie';
+      return Number(bIsGeMovie) - Number(aIsGeMovie);
     });
   }
 
@@ -92,8 +142,34 @@ const Player = (() => {
   }
 
   function streamForProvider(streams, provider) {
-    const stream = realStreams(streams)[0];
-    return stream ? { ...stream, label: provider, source: provider } : null;
+    const candidates = (streams || []).map(stream => {
+      if (!stream) return null;
+      let target = stream.rawUrl || stream.file || '';
+      let isWorkerMediaProxy = false;
+      try {
+        const parsed = new URL(stream.file || '', WORKER);
+        if (parsed.origin === new URL(WORKER).origin && /^\/(?:play|hls)$/.test(parsed.pathname) && parsed.searchParams.get('u')) {
+          target = parsed.searchParams.get('u');
+          isWorkerMediaProxy = true;
+        }
+      } catch { /* malformed candidates are rejected below */ }
+
+      if (!target || /(?:vidsrc|vsembed|streamingnow\.mov|youtube\.com|youtu\.be|trailer|treiler)/i.test(target)) return null;
+      const isDirectMedia = isWorkerMediaProxy || stream.isIframe === false || /\.(?:m3u8|mp4)(?:[/?#]|$)/i.test(target);
+      const isHttpsIframe = /^https:\/\//i.test(target) && stream.isIframe !== false;
+      if (!isDirectMedia && !isHttpsIframe) return null;
+      return {
+        stream: {
+          ...stream,
+          rawUrl: target,
+          isIframe: isDirectMedia ? false : true,
+          label: provider,
+          source: provider,
+        },
+        score: isDirectMedia ? 2 : 1,
+      };
+    }).filter(Boolean).sort((a, b) => b.score - a.score);
+    return candidates[0]?.stream || null;
   }
 
   function mergeEpisodeGroups(groups) {
@@ -205,14 +281,10 @@ const Player = (() => {
       return;
     }
 
-    const preferredLabel = localStorage.getItem('myfilm_preferred_stream') || 'ge.movie';
-    let currentIdx = 0;
-    
-    // Find index of stream matching the preferred label
-    const matchIdx = streams.findIndex(s => (s.label || '').toLowerCase() === preferredLabel.toLowerCase());
-    if (matchIdx !== -1) {
-      currentIdx = matchIdx;
-    }
+    const geMovieIdx = streams.findIndex(stream => String(stream.source || stream.label || '').toLowerCase() === 'ge.movie');
+    const preferredLabel = localStorage.getItem('myfilm_preferred_stream') || '';
+    const preferredIdx = streams.findIndex(stream => (stream.label || '').toLowerCase() === preferredLabel.toLowerCase());
+    let currentIdx = geMovieIdx !== -1 ? geMovieIdx : Math.max(preferredIdx, 0);
 
     el.innerHTML = nativeHtml(streams, currentIdx);
     const video = el.querySelector('#main-video');
@@ -464,7 +536,7 @@ const Player = (() => {
     const tmdbId = info.tmdbId || '';
     const query = cleanSeriesTitle(info.title || info.name);
     
-    const srcs = [
+    const srcs = info.geMovieAvailable === false ? [] : [
       { name:'🇬🇪 ge.movie', url: type==='tv' ? `https://em.filmx.my/play/?type=serial&id=${tmdbId}&name=serial&season=1&episode=1&lang=ka` : `https://em.filmx.my/play/?type=movie&id=${tmdbId}&lang=ka` },
     ];
     const btns = srcs.map(s=>
@@ -548,6 +620,7 @@ function hasCJK(str) {
   async function tryWorkerMovie(info) {
     const queries = buildQueries(info);
     const englishTitle = cleanSeriesTitle(info.origTitle || info.title || '');
+    const geMoviePromise = hasGeMovie(info);
     setStatus(`🔍 ${MOVIE_SCRAPERS.length} ქართულ წყაროზე ძიება...`);
 
     const found = await Promise.all(MOVIE_SCRAPERS.map(async provider => {
@@ -572,9 +645,9 @@ function hasCJK(str) {
     }));
 
     const streams = found.filter(Boolean);
-    if (info.tmdbId) {
-      const geMovieStream = { isIframe: true, file: `https://em.filmx.my/play/?type=movie&id=${info.tmdbId}&lang=ka`, rawUrl: `https://em.filmx.my/play/?type=movie&id=${info.tmdbId}&lang=ka`, label: "ge.movie" };
-      streams.unshift(geMovieStream);
+    info.geMovieAvailable = await geMoviePromise;
+    if (info.geMovieAvailable) {
+      streams.unshift(buildGeMovieStream(info));
     }
 
     const normalized = realStreams(streams);
@@ -637,7 +710,7 @@ function hasCJK(str) {
 
     if (result.length && info.tmdbId) {
       result.forEach(ep => {
-        const geMovieStream = { isIframe: true, file: `https://em.filmx.my/play/?type=serial&id=${info.tmdbId}&name=serial&season=${ep.season}&episode=${ep.episode}&lang=ka`, rawUrl: `https://em.filmx.my/play/?type=serial&id=${info.tmdbId}&name=serial&season=${ep.season}&episode=${ep.episode}&lang=ka`, label: "ge.movie" };
+        const geMovieStream = { isIframe: true, file: `https://em.filmx.my/play/?type=serial&id=${info.tmdbId}&name=serial&season=${ep.season}&episode=${ep.episode}&lang=ka`, rawUrl: `https://em.filmx.my/play/?type=serial&id=${info.tmdbId}&name=serial&season=${ep.season}&episode=${ep.episode}&lang=ka`, label: "ge.movie", source: "ge.movie" };
         if (ep.streams) {
           ep.streams.unshift(geMovieStream);
         } else {
@@ -652,10 +725,10 @@ function hasCJK(str) {
   async function discoverEpisodeStreams(episodeInfo, existingStreams) {
     if (!episodeInfo || currentInfo?.animetv_url) return realStreams(existingStreams);
 
-    const existing = realStreams(existingStreams);
+    const geMoviePromise = hasGeMovie(currentInfo, episodeInfo);
+    const existing = realStreams(existingStreams).filter(stream => String(stream.source || stream.label || '').toLowerCase() !== 'ge.movie');
     const existingProviders = new Set(existing.map(stream => String(stream.source || stream.label || '').toLowerCase()));
     const missingProviders = SERIES_SCRAPERS.filter(provider => !existingProviders.has(provider.toLowerCase()));
-    if (!missingProviders.length) return existing;
 
     const queries = buildQueries(currentInfo || {});
     const englishTitle = cleanSeriesTitle(currentInfo?.origTitle || currentInfo?.title || '');
@@ -683,7 +756,13 @@ function hasCJK(str) {
       return null;
     }));
 
-    const streams = realStreams([...existing, ...discovered.filter(Boolean)]);
+    const geMovieAvailable = await geMoviePromise;
+    currentInfo.geMovieAvailable = geMovieAvailable;
+    const streams = realStreams([
+      ...(geMovieAvailable ? [buildGeMovieStream(currentInfo, episodeInfo)] : []),
+      ...existing,
+      ...discovered.filter(Boolean),
+    ]);
     episodeInfo.streams = streams;
     return streams;
   }
@@ -731,6 +810,7 @@ function hasCJK(str) {
         if (onReady) onReady(episodes);
         return { type: 'worker', episodes };
       }
+      info.geMovieAvailable = await hasGeMovie(info, { season: 1, episode: 1 });
       showFallback(el, info, 'tv');
       return null;
     }
@@ -744,6 +824,7 @@ function hasCJK(str) {
       }
     }
 
+    info.geMovieAvailable = await hasGeMovie(info, { season: 1, episode: 1 });
     showFallback(el, info, 'tv');
     return null;
   }

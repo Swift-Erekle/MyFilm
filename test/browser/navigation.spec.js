@@ -35,19 +35,25 @@ const sampleTv = {
   similar: { results: [] },
 };
 
-async function mockApplicationApi(page) {
+async function mockApplicationApi(page, { geMovieAvailable = true } = {}) {
+  await page.route('**/api/ge-movie/status**', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true, available: geMovieAvailable, provider: 'ge.movie' }),
+  }));
   await page.route('**/api/providers/status**', route => route.fulfill({
     contentType: 'application/json',
     body: JSON.stringify({ ok: true, providers: [{ id: 'ge.movie', label: 'ge.movie', healthy: true }] }),
   }));
   await page.route('**/imovs?**', route => {
     const source = new URL(route.request().url()).searchParams.get('source');
-    const players = source === 'imovs.ge' ? [{
-      source: 'imovs.ge',
+    const playableSource = source === 'imovs.ge' || source === 'kinolab.cc';
+    const blockedSource = source === 'geofilms.net';
+    const players = playableSource || blockedSource ? [{
+      source,
       streams: [{
-        label: 'imovs.ge',
-        file: 'https://myfilm.example/play?u=https%3A%2F%2Fimovs.ge%2Fembed%2Finception&ref=https%3A%2F%2Fimovs.ge',
-        rawUrl: 'https://imovs.ge/embed/inception',
+        label: source,
+        file: blockedSource ? 'https://vsembed.ru/embed/movie/tt1375666' : 'https://myfilm.example/play?u=https%3A%2F%2Fimovs.ge%2Fembed%2Finception&ref=https%3A%2F%2Fimovs.ge',
+        rawUrl: blockedSource ? 'https://vsembed.ru/embed/movie/tt1375666' : 'https://imovs.ge/embed/inception',
         isIframe: true,
       }],
     }] : [];
@@ -60,18 +66,19 @@ async function mockApplicationApi(page) {
     const url = new URL(route.request().url());
     const source = url.searchParams.get('source');
     const isSelectedEpisode = url.searchParams.get('season') === '1' && url.searchParams.get('episode') === '1';
-    const available = source === 'adjaranetto.com' || (source === 'Croconet.cam' && isSelectedEpisode);
-    const episodes = available ? [{
+    const available = source === 'adjaranetto.com' || source === 'imovs.ge' || (source === 'Croconet.cam' && isSelectedEpisode);
+    const resultCount = source === 'imovs.ge' ? 2 : available ? 1 : 0;
+    const episodes = Array.from({ length: resultCount }, (_unused, index) => ({
       season: 1,
       episode: 1,
       streams: [{
         label: source,
         source,
-        file: `https://myfilm.example/play?u=${encodeURIComponent(`https://${source}/embed/silo-s1e1`)}`,
-        rawUrl: `https://${source}/embed/silo-s1e1`,
+        file: `https://myfilm.example/play?u=${encodeURIComponent(`https://${source}/embed/silo-s1e1-${index}`)}`,
+        rawUrl: `https://${source}/embed/silo-s1e1-${index}`,
         isIframe: true,
       }],
-    }] : [];
+    }));
     return route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({ ok: episodes.length > 0, episodes }),
@@ -125,13 +132,23 @@ test('a direct clean detail URL loads SPA assets from the site root', async ({ p
   const playerFrame = page.locator('.iframe-player-wrap iframe');
   await expect(playerFrame).toHaveAttribute('sandbox', /allow-scripts/);
   await expect(page.locator('#quality-select option')).toHaveText(['ge.movie', 'imovs.ge']);
+  await expect(page.locator('#quality-select')).toHaveValue('0');
+});
+
+test('ge.movie is hidden when its catalog reports the title as unavailable', async ({ page }) => {
+  await mockApplicationApi(page, { geMovieAvailable: false });
+  await page.goto('/movie/27205');
+  await expect(page.locator('.detail-title')).toHaveText('Inception');
+  await expect(page.locator('.iframe-player-wrap iframe[src*="em.filmx.my"]')).toHaveCount(0);
+  await expect(page.locator('#quality-select option', { hasText: 'ge.movie' })).toHaveCount(0);
 });
 
 test('a selected series episode adds only providers that return that episode', async ({ page }) => {
   await mockApplicationApi(page);
   await page.goto('/tv/125988');
   await expect(page.locator('.detail-title')).toHaveText('Silo');
-  await expect(page.locator('#quality-select option')).toHaveText(['ge.movie', 'adjaranetto.com', 'Croconet.cam']);
+  await expect(page.locator('#quality-select option')).toHaveText(['ge.movie', 'adjaranetto.com', 'imovs.ge', 'Croconet.cam']);
+  await expect(page.locator('#quality-select')).toHaveValue('0');
 });
 
 test('cards expose keyboard link semantics when content is rendered', async ({ page }) => {

@@ -41,3 +41,12 @@ test('player extraction rejects trailers and advertising assets', () => {
   `;
   assert.deepEqual(extractPlayerUrls(html, 'https://example.com/'), ['https://video.sibnet.ru/shell.php?videoid=44']);
 });
+
+test('player extraction rejects embeds known to fail in the application player', () => {
+  const html = `
+    <iframe src="https://vsembed.ru/embed/movie/tt100"></iframe>
+    <iframe src="https://vidsrc-embed.ru/embed/movie/tt100"></iframe>
+    <video src="https://cdn.example.com/movie/master.m3u8"></video>
+  `;
+  assert.deepEqual(extractPlayerUrls(html, 'https://example.com/'), ['https://cdn.example.com/movie/master.m3u8']);
+});

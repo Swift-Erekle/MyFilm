@@ -56,3 +56,25 @@ test('AnimeTV direct-page route rejects arbitrary hosts', async () => {
   const response = await worker.fetch(new Request('https://myfilm.example/animetv_page?url=https%3A%2F%2Fevil.example%2Fpage.html'), env);
   assert.equal(response.status, 400);
 });
+
+test('ge.movie status distinguishes a playable catalog ID from a missing ID', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async input => {
+    const target = new URL(String(input));
+    if (target.searchParams.get('id') === '27205') {
+      return new Response(JSON.stringify([{ file: '[HD]{ქართული}https://cdn.example.com/inception.m3u8' }]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    return new Response('', { status: 404 });
+  };
+  try {
+    const availableResponse = await worker.fetch(new Request('https://myfilm.example/api/ge-movie/status?type=movie&id=27205'), env);
+    const missingResponse = await worker.fetch(new Request('https://myfilm.example/api/ge-movie/status?type=movie&id=999999999'), env);
+    assert.equal((await availableResponse.json()).available, true);
+    assert.equal((await missingResponse.json()).available, false);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

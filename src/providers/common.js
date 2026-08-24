@@ -106,7 +106,7 @@ export function bestTitleCandidate(candidates, queries, minimum = 0.35) {
 
 export function isPlayableCandidate(value) {
   const raw = String(value || '').trim();
-  if (!raw || /(?:youtube\.com|youtu\.be|trailer|treiler|google-analytics|googletagmanager|doubleclick|facebook\.com\/plugins|(?:^|[./_-])ads?(?:[./_-]|$)|banner|\.(?:css|js|mjs|png|jpe?g|gif|svg|webp|woff2?|ttf)(?:\?|$))/i.test(raw)) return false;
+  if (!raw || /(?:youtube\.com|youtu\.be|vidsrc|vsembed|streamingnow\.mov|trailer|treiler|google-analytics|googletagmanager|doubleclick|facebook\.com\/plugins|(?:^|[./_-])ads?(?:[./_-]|$)|banner|\.(?:css|js|mjs|png|jpe?g|gif|svg|webp|woff2?|ttf)(?:\?|$))/i.test(raw)) return false;
   try {
     const url = new URL(raw);
     return url.protocol === 'https:' && /(?:embed|player|video|stream|\.m3u8|\.mp4|sibnet|mail\.ru|ok\.ru|vkvideo|myvi|stormo|secvideo|csst|incvideo|fmovie|mykadri|allarknow|drive\.google)/i.test(url.toString());
