@@ -22,6 +22,21 @@ async function mockApplicationApi(page) {
     contentType: 'application/json',
     body: JSON.stringify({ ok: true, providers: [{ id: 'ge.movie', label: 'ge.movie', healthy: true }] }),
   }));
+  await page.route('**/imovs?**', route => route.fulfill({
+    contentType: 'application/json',
+    body: JSON.stringify({
+      ok: true,
+      players: [{
+        source: 'imovs.ge',
+        streams: [{
+          label: 'imovs.ge',
+          file: 'https://myfilm.example/play?u=https%3A%2F%2Fimovs.ge%2Fembed%2Finception&ref=https%3A%2F%2Fimovs.ge',
+          rawUrl: 'https://imovs.ge/embed/inception',
+          isIframe: true,
+        }],
+      }],
+    }),
+  }));
   await page.route('**/api/tmdb/**', route => {
     const url = new URL(route.request().url());
     let body;
@@ -60,6 +75,7 @@ test('a direct clean detail URL loads SPA assets from the site root', async ({ p
   await expect(page.locator('.detail-title')).toHaveText('Inception');
   const playerFrame = page.locator('.iframe-player-wrap iframe');
   await expect(playerFrame).toHaveAttribute('sandbox', /allow-scripts/);
+  await expect(page.locator('#quality-select option')).toHaveText(['ge.movie', 'imovs.ge']);
 });
 
 test('cards expose keyboard link semantics when content is rendered', async ({ page }) => {

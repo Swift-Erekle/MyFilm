@@ -51,6 +51,27 @@ const Player = (() => {
     return streams.filter(stream => !stream.isPlaceholder || healthy.has(stream.label));
   }
 
+  function realStreams(streams) {
+    const seen = new Set();
+    return (streams || []).filter(stream => {
+      if (!stream || stream.isPlaceholder) return false;
+      const url = stream.file || stream.rawUrl;
+      if (!url) return false;
+      const key = `${stream.label || ''}|${url}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  function realEpisodes(episodes) {
+    const list = (episodes || [])
+      .map(ep => ({ ...ep, streams: realStreams(ep.streams) }))
+      .filter(ep => ep.streams.length);
+    if (episodes && episodes.overview) list.overview = episodes.overview;
+    return list;
+  }
+
   function htmlEscape(value) {
     return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
@@ -118,6 +139,17 @@ const Player = (() => {
   }
 
   async function renderNative(el, streams, onErrorFallback) {
+    streams = realStreams(streams);
+    if (!streams.length) {
+      el.innerHTML = `
+        <div class="player-error">
+          <div class="pe-icon">🔍</div>
+          <div class="pe-msg">ამ ჩანაწერზე ქართული წყარო ვერ მოიძებნა</div>
+          <div class="pe-sub">სცადე სხვა ფილმი, სერია ან ანიმე</div>
+        </div>`;
+      return;
+    }
+
     const preferredLabel = localStorage.getItem('myfilm_preferred_stream') || 'ge.movie';
     let currentIdx = 0;
     
@@ -482,6 +514,10 @@ function hasCJK(str) {
       }
     }
     
+    if (result?.length && result[0].streams) {
+      result[0].streams = realStreams(result[0].streams);
+    }
+
     return result;
   }
 
@@ -494,7 +530,7 @@ function hasCJK(str) {
         if (d?.episodes?.length) {
           const arr = d.episodes;
           if (d.overview) arr.overview = d.overview;
-          return arr;
+          return realEpisodes(arr);
         }
       } catch { /* custom AnimeTV source is optional */ }
       return null;
@@ -508,21 +544,21 @@ function hasCJK(str) {
       try {
         const r = await fetchWithTimeout(`${WORKER}/imovs-series?q=${encodeURIComponent(q)}`, { timeout: 6000 });
         const d = await r.json();
-        if (d?.episodes?.length) { result = d.episodes; break; }
+        if (d?.episodes?.length) { result = realEpisodes(d.episodes); break; }
       } catch { /* try the next title/provider */ }
       
       setStatus(`🔍 ანიმეს ძიება: ${q}...`);
       try {
         const ra = await fetchWithTimeout(`${WORKER}/animeb?q=${encodeURIComponent(q)}`, { timeout: 6000 });
         const da = await ra.json();
-        if (da?.episodes?.length) { result = da.episodes; break; }
+        if (da?.episodes?.length) { result = realEpisodes(da.episodes); break; }
       } catch { /* AnimeB may not carry this title */ }
 
       setStatus(`🔍 animetv.ge ძიება: ${q}...`);
       try {
         const rat = await fetchWithTimeout(`${WORKER}/animetv?q=${encodeURIComponent(q)}`, { timeout: 6000 });
         const dat = await rat.json();
-        if (dat?.episodes?.length) { result = dat.episodes; break; }
+        if (dat?.episodes?.length) { result = realEpisodes(dat.episodes); break; }
       } catch { /* AnimeTV may not carry this title */ }
     }
 
@@ -537,7 +573,7 @@ function hasCJK(str) {
       });
     }
 
-    return result;
+    return realEpisodes(result);
   }
 
   // ══════════════════════════════════════════
@@ -561,21 +597,13 @@ function hasCJK(str) {
       return;
     }
 
-    const tmdbId = info.tmdbId;
-    const defaultStreams = await visibleStreams([
-      { label: 'ge.movie', file: `https://em.filmx.my/play/?type=movie&id=${tmdbId}&lang=ka`, rawUrl: `https://em.filmx.my/play/?type=movie&id=${tmdbId}&lang=ka`, isIframe: true },
-      { label: 'adjaranetto.com', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
-      { label: 'chemikino.com', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
-      { label: 'ufasofilmebi.ge', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
-      { label: 'Croconet.cam', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
-      { label: 'imovs.ge', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
-      { label: 'asia.com.ge', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
-      { label: 'geofilms.net', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
-      { label: 'kinolab.cc', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
-      { label: 'geosaitebi.tv', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
-    ], 'movie');
-
-    await renderNative(el, defaultStreams, null);
+    el.innerHTML = loadingHtml('წყაროები იტვირთება...');
+    const players = await tryWorkerMovie(info);
+    if (players?.length && players[0].streams?.length) {
+      await renderNative(el, players[0].streams, null);
+    } else {
+      showFallback(el, info, 'movie');
+    }
   }
 
   async function loadSeries(containerId, info, onReady) {
@@ -596,29 +624,12 @@ function hasCJK(str) {
     }
 
     if (info.seasons && onReady) {
-      const episodes = [];
-      const healthy = await healthyProviderIds('tv');
-      const providerLabels = ['adjaranetto.com', 'chemikino.com', 'ufasofilmebi.ge', 'Croconet.cam', 'imovs.ge', 'asia.com.ge', 'geofilms.net', 'kinolab.cc', 'geosaitebi.tv']
-        .filter(label => healthy.has(label));
-      info.seasons.forEach(s => {
-        if (s.season_number === 0) return;
-        for (let e = 1; e <= s.episode_count; e++) {
-          const streams = [
-            { label: 'ge.movie', file: `https://em.filmx.my/play/?type=serial&id=${info.tmdbId}&name=serial&season=${s.season_number}&episode=${e}&lang=ka`, rawUrl: `https://em.filmx.my/play/?type=serial&id=${info.tmdbId}&name=serial&season=${s.season_number}&episode=${e}&lang=ka`, isIframe: true },
-            ...providerLabels.map(label => ({ label, file: '', rawUrl: '', isPlaceholder: true, searchType: 'series', season: s.season_number, episode: e })),
-          ];
-          
-          episodes.push({
-            season: s.season_number,
-            episode: e,
-            title: `სეზონი ${s.season_number} / სერია ${e}`,
-            streams: streams
-          });
-        }
-      });
-      
-      onReady(episodes);
-      return { type: 'local', episodes };
+      el.innerHTML = loadingHtml('წყაროები იტვირთება...');
+      const episodes = await tryWorkerSeries(info);
+      if (episodes?.length) {
+        onReady(episodes);
+        return { type: 'worker', episodes };
+      }
     }
 
     showFallback(el, info, 'tv');
@@ -629,7 +640,7 @@ function hasCJK(str) {
   async function loadEpisode(containerId, streams, onErrorFallback) {
     const el = document.getElementById(containerId);
     if (!el) return;
-    await renderNative(el, streams, onErrorFallback);
+    await renderNative(el, realStreams(streams), onErrorFallback);
   }
 
   function destroy() {
