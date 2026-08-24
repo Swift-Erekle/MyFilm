@@ -5,6 +5,7 @@ import {
   fetchHtml,
   normalizeTitle,
 } from './common.js';
+import { searchWebForProvider } from './web-search.js';
 
 function detailCandidates(html, provider) {
   const candidates = [];
@@ -38,46 +39,64 @@ export async function searchGenericProvider(provider, context) {
   const candidates = [];
 
   for (const query of queries) {
-    const form = new URLSearchParams({ do: 'search', subaction: 'search', story: query });
-    const target = provider.searchMethod === 'POST'
-      ? provider.searchUrl
-      : `${provider.searchUrl}${provider.searchUrl.includes('?') ? '&' : '?'}s=${encodeURIComponent(query)}`;
-    const { text } = await fetchHtml(target, {
-      referer: provider.baseUrl,
-      method: provider.searchMethod,
-      body: provider.searchMethod === 'POST' ? form : undefined,
-      timeoutMs: 9_000,
-    });
-    candidates.push(...detailCandidates(text, provider));
-  }
-
-  const remaining = [...new Map(candidates.map(candidate => [candidate.url, candidate])).values()]
-    .filter(candidate => !wantedYear || !extractYear(candidate.title) || extractYear(candidate.title) === wantedYear);
-
-  for (let attempt = 0; attempt < 8 && remaining.length; attempt += 1) {
-    const best = bestTitleCandidate(remaining, queries, 0.25);
-    if (!best) break;
-    const candidateIndex = remaining.findIndex(candidate => candidate.url === best.url);
-    if (candidateIndex !== -1) remaining.splice(candidateIndex, 1);
-
     try {
-      const { text, finalUrl } = await fetchHtml(best.url, { referer: provider.baseUrl, timeoutMs: 10_000 });
-      const pageTitle = (text.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || best.title;
-      const pageYear = extractYear(pageTitle);
-      if (wantedYear && pageYear && pageYear !== wantedYear) continue;
-      if (Math.max(...queries.map(query => normalizeTitle(pageTitle).includes(normalizeTitle(query)) ? 1 : 0)) === 0 && best.score < 0.45) continue;
-
-      const playerUrls = extractPlayerUrls(text, finalUrl);
-      if (!playerUrls.length) continue;
-      return playerUrls.map((url, index) => ({
-        file: url,
-        rawUrl: url,
-        label: `${provider.label} ${index + 1}`,
-        source: provider.id,
-        isIframe: !/\.(?:m3u8|mp4)(?:\?|$)/i.test(url),
+      const form = new URLSearchParams({ do: 'search', subaction: 'search', story: query });
+      const target = provider.searchMethod === 'POST'
+        ? provider.searchUrl
+        : `${provider.searchUrl}${provider.searchUrl.includes('?') ? '&' : '?'}s=${encodeURIComponent(query)}`;
+      const { text } = await fetchHtml(target, {
+        referer: provider.baseUrl,
+        method: provider.searchMethod,
+        body: provider.searchMethod === 'POST' ? form : undefined,
+        timeoutMs: 9_000,
+      });
+      candidates.push(...detailCandidates(text, provider));
+    } catch (error) {
+      console.error(JSON.stringify({
+        message: 'provider_internal_search_failed',
+        provider: provider.id,
+        error: error instanceof Error ? error.message : String(error),
       }));
-    } catch { /* try the next matching detail candidate */ }
+    }
   }
+
+  const tryCandidates = async inputCandidates => {
+    const remaining = [...new Map(inputCandidates.map(candidate => [candidate.url, candidate])).values()]
+      .filter(candidate => !wantedYear || !extractYear(candidate.title) || extractYear(candidate.title) === wantedYear);
+
+    for (let attempt = 0; attempt < 8 && remaining.length; attempt += 1) {
+      const best = bestTitleCandidate(remaining, queries, 0.25);
+      if (!best) break;
+      const candidateIndex = remaining.findIndex(candidate => candidate.url === best.url);
+      if (candidateIndex !== -1) remaining.splice(candidateIndex, 1);
+
+      try {
+        const { text, finalUrl } = await fetchHtml(best.url, { referer: provider.baseUrl, timeoutMs: 10_000 });
+        const pageTitle = (text.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || best.title;
+        const pageYear = extractYear(pageTitle);
+        if (wantedYear && pageYear && pageYear !== wantedYear) continue;
+        if (Math.max(...queries.map(query => normalizeTitle(pageTitle).includes(normalizeTitle(query)) ? 1 : 0)) === 0 && best.score < 0.45) continue;
+
+        const playerUrls = extractPlayerUrls(text, finalUrl);
+        if (!playerUrls.length) continue;
+        return playerUrls.map((url, index) => ({
+          file: url,
+          rawUrl: url,
+          label: `${provider.label} ${index + 1}`,
+          source: provider.id,
+          isIframe: !/\.(?:m3u8|mp4)(?:\?|$)/i.test(url),
+        }));
+      } catch { /* try the next matching detail candidate */ }
+    }
+    return [];
+  };
+
+  const internalStreams = await tryCandidates(candidates);
+  if (internalStreams.length) return internalStreams;
+
+  const webCandidates = await searchWebForProvider(provider, context);
+  const webStreams = await tryCandidates(webCandidates);
+  if (webStreams.length) return webStreams;
 
   return [];
 }

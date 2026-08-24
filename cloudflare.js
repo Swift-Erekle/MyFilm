@@ -1,4 +1,4 @@
-import { extractAssignedObject, fetchWithTimeout as fetchProvider, inspectProviderHealth, parsePlayerArrays, searchExternalProvider, safeErrorCode, titleScore } from './src/providers/index.js';
+import { extractAssignedObject, fetchWithTimeout as fetchProvider, inspectProviderHealth, parsePlayerArrays, searchExternalProvider, searchWebForProvider, safeErrorCode, titleScore } from './src/providers/index.js';
 import { corsOrigin, isAllowedProxyUrl, publicOrigin } from './src/security.js';
 
 const DEFAULT_TMDB_API_KEY = '8265bd1679663a7ea12ac168da84d2e8';
@@ -725,10 +725,15 @@ export default {
       try {
         const searchQuery = engQuery || query;
         const searchUrl = 'https://ufasofilmebi.ge/?s=' + encodeURIComponent(searchQuery);
-        const r = await fetchProvider(searchUrl, {
-          headers: { 'User-Agent': 'Mozilla/5.0' }
-        }, { timeoutMs: 10_000 });
-        const html = await r.text();
+        let html = '';
+        try {
+          const r = await fetchProvider(searchUrl, {
+            headers: { 'User-Agent': 'Mozilla/5.0' }
+          }, { timeoutMs: 10_000 });
+          html = await r.text();
+        } catch (error) {
+          console.error(JSON.stringify({ message: 'provider_internal_search_failed', provider: 'ufasofilmebi.ge', error: error instanceof Error ? error.message : String(error) }));
+        }
         
         const links = [...html.matchAll(/href=["'](https?:\/\/ufasofilmebi\.ge)?(\/[^"\'\s/]+\/)["']/gi)];
         
@@ -759,31 +764,34 @@ export default {
             }
         }
 
-        let bestScore = 0;
-        let bestMatch = null;
-         for (const res of uniqueResults) {
-           const candidateYear = extractYearFromStr(res.title) || extractYearFromUrl(res.url);
-           if (wantedYear && candidateYear && candidateYear !== wantedYear) continue;
-           let score = Math.max(scoreTitle(query, res.title), engQuery ? scoreTitle(engQuery, res.title) : 0);
-           if (score > bestScore) {
-             bestScore = score;
-             bestMatch = res;
-           }
-        }
+        const resolveResults = async resultsToTry => {
+          const ranked = resultsToTry.map(res => ({
+            ...res,
+            score: Math.max(scoreTitle(query, res.title), engQuery ? scoreTitle(engQuery, res.title) : 0),
+          })).filter(res => {
+            const candidateYear = extractYearFromStr(res.title) || extractYearFromUrl(res.url);
+            return res.score > 0.2 && (!wantedYear || !candidateYear || candidateYear === wantedYear);
+          }).sort((a, b) => b.score - a.score);
 
-        if (bestMatch && bestScore > 0.2) {
-          const detailR = await fetchProvider(bestMatch.url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, { timeoutMs: 10_000 });
-          const detailHtml = await detailR.text();
-          const detailYear = extractYearFromStr(pickTitle(detailHtml)) || extractYearFromUrl(bestMatch.url);
-          if (wantedYear && detailYear && detailYear !== wantedYear) return [];
-          
-          if (type === 'movie') {
+          for (const bestMatch of ranked.slice(0, 8)) {
+            let detailHtml = '';
+            try {
+              const detailR = await fetchProvider(bestMatch.url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, { timeoutMs: 10_000 });
+              detailHtml = await detailR.text();
+            } catch { continue; }
+            const detailTitle = pickTitle(detailHtml) || bestMatch.title;
+            const detailYear = extractYearFromStr(detailTitle) || extractYearFromUrl(bestMatch.url);
+            const detailScore = Math.max(scoreTitle(query, detailTitle), engQuery ? scoreTitle(engQuery, detailTitle) : 0);
+            if (wantedYear && detailYear && detailYear !== wantedYear) continue;
+            if (detailScore < 0.2) continue;
+
+            if (type === 'movie') {
               const serversMatch = detailHtml.match(/var\s+Servers\s*=\s*(\{[\s\S]*?\});/);
               if (serversMatch) {
                   try {
                       const servers = JSON.parse(serversMatch[1]);
                       let embedUrl = servers.superembed || servers.premium;
-                      if (embedUrl) {
+                      if (embedUrl && !/(?:youtube|trailer|vidsrc|vsembed|streamingnow)/i.test(embedUrl)) {
                           if (embedUrl.startsWith('//')) embedUrl = 'https:' + embedUrl;
                           return [{ file: embedUrl, label: "ufasofilmebi.ge", source: "ufasofilmebi.ge" }];
                       }
@@ -791,7 +799,7 @@ export default {
                     console.error(JSON.stringify({ message: 'provider_payload_invalid', provider: 'ufasofilmebi.ge', section: 'servers', error: error instanceof Error ? error.message : String(error) }));
                   }
               }
-          } else if (type === 'series') {
+            } else if (type === 'series') {
               const linksMatch = detailHtml.match(/var\s+links\s*=\s*(\{[\s\S]*?\});/);
               if (linksMatch) {
                   try {
@@ -799,7 +807,7 @@ export default {
                       const seasonMap = {};
                       for (const [key, val] of Object.entries(lData)) {
                           const m = key.match(/s(\d+)_(\d+)/i);
-                          if (m && val.data && val.data.length && val.data[0]["1"] && val.data[0]["1"].url) {
+                           if (m && val.data && val.data.length && val.data[0]["1"] && val.data[0]["1"].url && !/(?:youtube|trailer|vidsrc|vsembed|streamingnow)/i.test(val.data[0]["1"].url)) {
                               let sNum = parseInt(m[1]);
                               let eNum = parseInt(m[2]);
                               if (!seasonMap[sNum]) seasonMap[sNum] = [];
@@ -810,13 +818,23 @@ export default {
                       for (const [sNum, eps] of Object.entries(seasonMap)) {
                           seasons.push({ season: parseInt(sNum), episodes: eps });
                       }
-                      return seasons;
+                      if (seasons.length) return seasons;
                   } catch (error) {
                     console.error(JSON.stringify({ message: 'provider_payload_invalid', provider: 'ufasofilmebi.ge', section: 'episodes', error: error instanceof Error ? error.message : String(error) }));
                   }
               }
+            }
           }
-        }
+          return [];
+        };
+
+        const internalResult = await resolveResults(uniqueResults);
+        if (internalResult.length) return internalResult;
+        const webResults = await searchWebForProvider(
+          { id: 'ufasofilmebi.ge', baseUrl: 'https://ufasofilmebi.ge/' },
+          { query, engQuery, year: wantedYear },
+        );
+        return await resolveResults(webResults);
       } catch (e) {
         console.error("ufasofilmebi.ge search error:", e);
       }
@@ -828,15 +846,20 @@ export default {
         const searchQuery = engQuery || query;
         const searchUrl = 'https://chemikino.com/index.php?do=search';
         const bodyText = 'do=search&subaction=search&story=' + encodeURIComponent(searchQuery);
-        const r = await fetchProvider(searchUrl, {
-          method: 'POST',
-          headers: {
-            'User-Agent': 'Mozilla/5.0',
-            'Content-Type': 'application/x-www-form-urlencoded'
-          },
-          body: bodyText
-        }, { timeoutMs: 10_000 });
-        const html = await r.text();
+        let html = '';
+        try {
+          const r = await fetchProvider(searchUrl, {
+            method: 'POST',
+            headers: {
+              'User-Agent': 'Mozilla/5.0',
+              'Content-Type': 'application/x-www-form-urlencoded'
+            },
+            body: bodyText
+          }, { timeoutMs: 10_000 });
+          html = await r.text();
+        } catch (error) {
+          console.error(JSON.stringify({ message: 'provider_internal_search_failed', provider: 'chemikino.com', error: error instanceof Error ? error.message : String(error) }));
+        }
         
         const links = [...html.matchAll(/href=["'](https?:\/\/chemikino\.com)?(\/\d+-[^"']+\.html)["']/gi)];
         
@@ -858,28 +881,30 @@ export default {
             }
         }
 
-        const rankedResults = [];
-        for (const m of uniqueResults) {
-          const candidateYear = extractYearFromStr(m.title) || extractYearFromUrl(m.url);
-          if (wantedYear && candidateYear && candidateYear !== wantedYear) continue;
-          const score = Math.max(scoreTitle(query, m.title), engQuery ? scoreTitle(engQuery, m.title) : 0);
-          if (score > 0.2) rankedResults.push({ ...m, score });
-        }
-        rankedResults.sort((a, b) => b.score - a.score);
+        const resolveResults = async resultsToTry => {
+          const rankedResults = [];
+          for (const m of resultsToTry) {
+            const candidateYear = extractYearFromStr(m.title) || extractYearFromUrl(m.url);
+            if (wantedYear && candidateYear && candidateYear !== wantedYear) continue;
+            const score = Math.max(scoreTitle(query, m.title), engQuery ? scoreTitle(engQuery, m.title) : 0);
+            if (score > 0.2) rankedResults.push({ ...m, score });
+          }
+          rankedResults.sort((a, b) => b.score - a.score);
 
-        for (const bestMatch of rankedResults.slice(0, 8)) {
+          for (const bestMatch of rankedResults.slice(0, 8)) {
           const pageHtml = await getText(bestMatch.url, 'https://chemikino.com/');
           if (!pageHtml) continue;
-          const detailYear = extractYearFromStr(pickTitle(pageHtml)) || extractYearFromUrl(bestMatch.url);
+          const detailTitle = pickTitle(pageHtml) || bestMatch.title;
+          const detailYear = extractYearFromStr(detailTitle) || extractYearFromUrl(bestMatch.url);
           if (wantedYear && detailYear && detailYear !== wantedYear) continue;
+          if (Math.max(scoreTitle(query, detailTitle), engQuery ? scoreTitle(engQuery, detailTitle) : 0) < 0.2) continue;
           const frames = [];
           const reI = /<iframe[^>]+(?:src|data-src)=["']([^"']+)["'][^>]*>/gi;
           let match;
           while ((match = reI.exec(pageHtml)) !== null) {
              let frameUrl = match[1];
              if (frameUrl.startsWith('//')) frameUrl = 'https:' + frameUrl;
-             if (frameUrl.includes('vidsrc')) continue; // Block vidsrc!
-             if (frameUrl.includes('vidsrc')) continue; // Block vidsrc!
+             if (/(?:vidsrc|vsembed|streamingnow|youtube|trailer)/i.test(frameUrl)) continue;
              if (!frameUrl.includes('google-analytics') && !frameUrl.includes('googletagmanager') && !frameUrl.includes('a-ads.com')) {
                 frames.push(frameUrl);
              }
@@ -896,7 +921,17 @@ export default {
            if (streams.length) {
               return wrapStreams(streams, bestMatch.url);
            }
-        }
+          }
+          return [];
+        };
+
+        const internalResult = await resolveResults(uniqueResults);
+        if (internalResult.length) return internalResult;
+        const webResults = await searchWebForProvider(
+          { id: 'chemikino.com', baseUrl: 'https://chemikino.com/' },
+          { query, engQuery, year: wantedYear },
+        );
+        return await resolveResults(webResults);
       } catch (e) {
         console.error("chemikino search error:", e);
       }
@@ -907,8 +942,13 @@ export default {
       try {
         const searchQuery = engQuery || query;
         const searchUrl = 'https://croconet.cam/search/' + encodeURIComponent(searchQuery);
-        const r = await fetchProvider(searchUrl, { headers: htmlHeaders() }, { timeoutMs: 10_000 });
-        const html = await r.text();
+        let html = '';
+        try {
+          const r = await fetchProvider(searchUrl, { headers: htmlHeaders() }, { timeoutMs: 10_000 });
+          html = await r.text();
+        } catch (error) {
+          console.error(JSON.stringify({ message: 'provider_internal_search_failed', provider: 'Croconet.cam', error: error instanceof Error ? error.message : String(error) }));
+        }
         const links = [...html.matchAll(/href=["'](https?:\/\/croconet\.cam)?(\/(?:movie|show|series|serial)\/\d+\/[^"']+)["']/gi)];
         
         const results = links.map(m => {
@@ -934,20 +974,22 @@ export default {
             }
         }
 
-        let bestMatch = null;
-        let bestScore = -1;
-        for (const m of uniqueResults) {
-          const candidateYear = extractYearFromStr(m.title) || extractYearFromUrl(m.url);
-          if (wantedYear && candidateYear && candidateYear !== wantedYear) continue;
-          const score = Math.max(scoreTitle(query, m.title), engQuery ? scoreTitle(engQuery, m.title) : 0);
-          if (score > bestScore) {
-            bestScore = score;
-            bestMatch = m;
-          }
-        }
+        const resolveResults = async resultsToTry => {
+          const ranked = resultsToTry.map(m => ({
+            ...m,
+            score: Math.max(scoreTitle(query, m.title), engQuery ? scoreTitle(engQuery, m.title) : 0),
+          })).filter(m => {
+            const candidateYear = extractYearFromStr(m.title) || extractYearFromUrl(m.url);
+            return m.score > 0.2 && (!wantedYear || !candidateYear || candidateYear === wantedYear);
+          }).sort((a, b) => b.score - a.score);
 
-        if (bestMatch && bestScore > 0.2) {
+          for (const bestMatch of ranked.slice(0, 8)) {
           const detailHtml = await getText(bestMatch.url, 'https://croconet.cam/');
+          if (!detailHtml) continue;
+          const detailTitle = pickTitle(detailHtml) || bestMatch.title;
+          const detailYear = extractYearFromStr(detailTitle) || extractYearFromUrl(bestMatch.url);
+          if (wantedYear && detailYear && detailYear !== wantedYear) continue;
+          if (Math.max(scoreTitle(query, detailTitle), engQuery ? scoreTitle(engQuery, detailTitle) : 0) < 0.2) continue;
           const m3u8Regex = /https?:[^\s"'`,]+?\.m3u8/gi;
           const matches = [...detailHtml.matchAll(m3u8Regex)].map(x => x[0]);
           
@@ -977,13 +1019,23 @@ export default {
                   : null;
                 const titleMatched = uniqueLinks.find(link => normTitle(link).replace(/\s+/g, '_').includes(normalizedQuery));
                 const selected = titleAndYearMatched || titleMatched || yearMatched || (!wantedYear ? uniqueLinks[0] : null);
-                if (selected) return [{ file: selected, label: "Croconet.cam", rawUrl: selected, isIframe: false }];
+                 if (selected) return [{ file: selected, label: "Croconet.cam", rawUrl: selected, isIframe: false }];
              }
-             console.error(JSON.stringify({ message: 'provider_stream_match_failed', provider: 'Croconet.cam', query, wantedYear: wantedYear || null, candidates: uniqueLinks.length }));
+             console.error(JSON.stringify({ message: 'provider_stream_match_failed', provider: 'Croconet.cam', query, wantedYear: wantedYear || null, candidates: uniqueLinks.length, page: bestMatch.url }));
+           }
           }
-        } else {
-          console.error(JSON.stringify({ message: 'provider_title_match_failed', provider: 'Croconet.cam', query, wantedYear: wantedYear || null, candidates: uniqueResults.length }));
-        }
+          return [];
+        };
+
+        const internalResult = await resolveResults(uniqueResults);
+        if (internalResult.length) return internalResult;
+        const webResults = await searchWebForProvider(
+          { id: 'Croconet.cam', baseUrl: 'https://croconet.cam/' },
+          { query, engQuery, year: wantedYear },
+        );
+        const webResult = await resolveResults(webResults);
+        if (webResult.length) return webResult;
+        console.error(JSON.stringify({ message: 'provider_title_match_failed', provider: 'Croconet.cam', query, wantedYear: wantedYear || null, candidates: uniqueResults.length + webResults.length }));
       } catch (e) {
         console.error("Croconet search error:", e);
       }
@@ -1045,6 +1097,51 @@ export default {
       } catch (e) {
         return [];
       }
+    }
+
+    async function searchAdjaranettoWeb(query, engQuery, geoQuery, wantedYear) {
+      const candidates = await searchWebForProvider(
+        { id: 'adjaranetto.com', baseUrl: 'https://adjaranetto.com/' },
+        { query, engQuery, geoQuery, year: wantedYear },
+      );
+      return candidates.flatMap(candidate => {
+        try {
+          const parsed = new URL(candidate.url);
+          if (!/\.html$/i.test(parsed.pathname)) return [];
+          const slug = decodeURIComponent(parsed.pathname.split('/').filter(Boolean).pop() || '').replace(/\.html$/i, '');
+          if (!slug) return [];
+          return [{
+            slug,
+            title: candidate.title,
+            allTitles: candidate.title,
+            year: extractYearFromStr(candidate.title) || extractYearFromUrl(candidate.url),
+          }];
+        } catch {
+          return [];
+        }
+      });
+    }
+
+    function rankAdjaranettoCandidates(movies, cleanQuery, engQuery, geoQuery, wantedYear) {
+      let best = null;
+      let bestScore = -1;
+      for (const movie of movies) {
+        const targetTitle = movie.allTitles || movie.title;
+        const targetEngPart = (targetTitle.match(/[|/]\s*([A-Za-z][^|/]+)$/) || [])[1] || '';
+        const titleMatch = Math.max(
+          scoreTitle(cleanQuery, targetTitle),
+          scoreTitle(engQuery, targetTitle),
+          scoreTitle(geoQuery, targetTitle),
+          targetEngPart ? scoreTitle(engQuery || cleanQuery, targetEngPart.trim()) : 0,
+        );
+        const yearMatch = wantedYear && movie.year ? (wantedYear === movie.year ? 1 : 0) : wantedYear ? 0 : 0.5;
+        const total = titleMatch * 0.7 + yearMatch * 0.3;
+        if (total > bestScore) {
+          bestScore = total;
+          best = movie;
+        }
+      }
+      return { best, score: bestScore };
     }
 
     async function getAdjaranettoMovieUrl(slug) {
@@ -1224,7 +1321,7 @@ export default {
           cf: { cacheTtl: 0, cacheEverything: false },
         }, { timeoutMs: 10_000 });
         const t = await r.text();
-        if (t && !looksLikeCF(t))
+        if (t && !looksLikeCF(t) && pickMovieLinksFromSearch(t, 'https://www.imovs.ge').length)
           return { base: "https://www.imovs.ge", html: t };
       } catch (error) {
         console.error(JSON.stringify({ message: 'provider_search_failed', provider: 'imovs.ge', stage: 'post', error: error instanceof Error ? error.message : String(error) }));
@@ -1243,8 +1340,16 @@ export default {
         for (const make of paths) {
           const u = B + make(q);
           const t = await getText(u, B + "/");
-          if (t && !looksLikeCF(t)) return { base: B, html: t };
+          if (t && !looksLikeCF(t) && pickMovieLinksFromSearch(t, B).length) return { base: B, html: t };
         }
+      const webResults = await searchWebForProvider(
+        { id: 'imovs.ge', baseUrl: 'https://www.imovs.ge/' },
+        { query: q, engQuery: extractEnglishTitle(q), geoQuery: extractGeorgianTitle(q), year: extractYearFromStr(q) },
+      );
+      if (webResults.length) {
+        const html = webResults.map(result => `<a class="movie-item" href="${result.url}">${result.title}</a>`).join('');
+        return { base: 'https://www.imovs.ge', html };
+      }
       return { base: "", html: "" };
     }
 
@@ -1360,29 +1465,19 @@ export default {
         const seenSlugs = new Set();
         adjaMovies = adjaMovies.filter(m => { if (seenSlugs.has(m.slug)) return false; seenSlugs.add(m.slug); return true; });
 
-        let bestAdja = null;
-        let bestScore = -1;
-        for (const m of adjaMovies) {
-          const targetTitle = m.allTitles || m.title;
-          const tScoreClean = scoreTitle(cleanQ, targetTitle);
-          const tScoreEng = scoreTitle(qEng, targetTitle);
-          const tScoreGeo = scoreTitle(qGeo, targetTitle);
-          const targetEngPart = (targetTitle.match(/[|/]\s*([A-Za-z][^|/]+)$/) || [])[1] || '';
-          const tScoreEngPart = targetEngPart ? scoreTitle(qEng || cleanQ, targetEngPart.trim()) : 0;
-          const tScore = Math.max(tScoreClean, tScoreEng, tScoreGeo, tScoreEngPart);
-          const yHit = wantYear && m.year ? (wantYear === m.year ? 1 : 0) : wantYear ? 0 : 0.5;
-          const total = tScore * 0.7 + yHit * 0.3;
-          if (total > bestScore) {
-            bestScore = total;
-            bestAdja = m;
+        let rankedAdja = rankAdjaranettoCandidates(adjaMovies, cleanQ, qEng, qGeo, wantYear);
+        let adjaUrl = rankedAdja.best && rankedAdja.score >= (wantYear ? 0.3 : 0.2)
+          ? await getAdjaranettoMovieUrl(rankedAdja.best.slug)
+          : null;
+        if (!adjaUrl) {
+          const webAdja = await searchAdjaranettoWeb(cleanQ, qEng, qGeo, wantYear);
+          rankedAdja = rankAdjaranettoCandidates(webAdja, cleanQ, qEng, qGeo, wantYear);
+          if (rankedAdja.best && rankedAdja.score >= (wantYear ? 0.3 : 0.2)) {
+            adjaUrl = await getAdjaranettoMovieUrl(rankedAdja.best.slug);
           }
         }
-
-        if (bestAdja && bestScore >= (wantYear ? 0.3 : 0.2)) {
-          let u = await getAdjaranettoMovieUrl(bestAdja.slug);
-          if (u) {
-            allPlayers.push({ streams: [{ file: u, label: "adjaranetto.com", rawUrl: u, isIframe: true }], candidate: u, source: "adjaranetto.com" });
-          }
+        if (adjaUrl) {
+          allPlayers.push({ streams: [{ file: adjaUrl, label: "adjaranetto.com", rawUrl: adjaUrl, isIframe: true }], candidate: adjaUrl, source: "adjaranetto.com" });
         }
       }
 
@@ -1506,16 +1601,18 @@ export default {
         const t = await getText(u, "https://animeb.ge/");
 
         const linkRe = /<a[^>]+href=["'](https?:\/\/animeb\.ge\/anime\/[^"']+\.html)["'][^>]*>([\s\S]*?)<\/a>/gi;
-        const links = [];
+        let links = [];
         let m;
         while ((m = linkRe.exec(t)) !== null) {
           const title = `${m[2].replace(/<[^>]+>/g, ' ')} ${decodeURIComponent(m[1].split('/').pop() || '').replace(/[-_]/g, ' ')}`;
           if (!links.some(item => item.url === m[1])) links.push({ url: m[1], title });
         }
 
-        if (!links.length) return json({ ok: false, error: "not_found" });
-
-        const best = links.map(item => ({ ...item, score: titleScore(q, item.title) })).sort((a, b) => b.score - a.score)[0];
+        let best = links.map(item => ({ ...item, score: titleScore(q, item.title) })).sort((a, b) => b.score - a.score)[0];
+        if (!best || best.score < 0.25) {
+          links = await searchWebForProvider({ id: 'animeb.ge', baseUrl: 'https://animeb.ge/' }, { query: q });
+          best = links.map(item => ({ ...item, score: titleScore(q, item.title) })).sort((a, b) => b.score - a.score)[0];
+        }
         if (!best || best.score < 0.25) return json({ ok: false, error: 'not_found', provider: 'animeb.ge' });
         const bestUrl = best.url;
         const detailHtml = await getText(bestUrl, "https://animeb.ge/");
@@ -1619,16 +1716,18 @@ export default {
         const t = await getText(u, "https://animetv.ge/");
 
         const linkRe = /<a[^>]+href=["'](https?:\/\/animetv\.ge\/[^"']+\.html)["'][^>]*>([\s\S]*?)<\/a>/gi;
-        const links = [];
+        let links = [];
         let m;
         while ((m = linkRe.exec(t)) !== null) {
           const title = `${m[2].replace(/<[^>]+>/g, ' ')} ${decodeURIComponent(m[1].split('/').pop() || '').replace(/[-_]/g, ' ')}`;
           if (!links.some(item => item.url === m[1])) links.push({ url: m[1], title });
         }
 
-        if (!links.length) return json({ ok: false, error: "not_found" });
-
-        const best = links.map(item => ({ ...item, score: titleScore(q, item.title) })).sort((a, b) => b.score - a.score)[0];
+        let best = links.map(item => ({ ...item, score: titleScore(q, item.title) })).sort((a, b) => b.score - a.score)[0];
+        if (!best || best.score < 0.25) {
+          links = await searchWebForProvider({ id: 'animetv.ge', baseUrl: 'https://animetv.ge/' }, { query: q });
+          best = links.map(item => ({ ...item, score: titleScore(q, item.title) })).sort((a, b) => b.score - a.score)[0];
+        }
         if (!best || best.score < 0.25) return json({ ok: false, error: 'not_found', provider: 'animetv.ge' });
         const detailHtml = await getText(best.url, "https://animetv.ge/");
         const episodes = buildAnimeTvEpisodes(detailHtml, best.url);
@@ -1695,26 +1794,18 @@ export default {
         const seenSlugsAdja = new Set();
         adjaMovies = adjaMovies.filter(m => { if (seenSlugsAdja.has(m.slug)) return false; seenSlugsAdja.add(m.slug); return true; });
 
-        let bestAdja = null;
-        let bestScore = -1;
-        for (const m of adjaMovies) {
-          const targetTitle = m.allTitles || m.title;
-          const tScoreClean = scoreTitle(cleanQ, targetTitle);
-          const tScoreEng = scoreTitle(qEng, targetTitle);
-          const tScoreGeo = scoreTitle(qGeo, targetTitle);
-          const targetEngPart = (targetTitle.match(/[|/]\s*([A-Za-z][^|/]+)$/) || [])[1] || '';
-          const tScoreEngPart = targetEngPart ? scoreTitle(qEng || cleanQ, targetEngPart.trim()) : 0;
-          const tScore = Math.max(tScoreClean, tScoreEng, tScoreGeo, tScoreEngPart);
-          const yHit = wantYear && m.year ? (wantYear === m.year ? 1 : 0) : wantYear ? 0 : 0.5;
-          const total = tScore * 0.7 + yHit * 0.3;
-          if (total > bestScore) {
-            bestScore = total;
-            bestAdja = m;
+        let rankedAdja = rankAdjaranettoCandidates(adjaMovies, cleanQ, qEng, qGeo, wantYear);
+        let seasons = rankedAdja.best && rankedAdja.score >= (wantYear ? 0.3 : 0.2)
+          ? await getAdjaranettoSeriesEpisodes(rankedAdja.best.slug)
+          : [];
+        if (!seasons.length) {
+          const webAdja = await searchAdjaranettoWeb(cleanQ, qEng, qGeo, wantYear);
+          rankedAdja = rankAdjaranettoCandidates(webAdja, cleanQ, qEng, qGeo, wantYear);
+          if (rankedAdja.best && rankedAdja.score >= (wantYear ? 0.3 : 0.2)) {
+            seasons = await getAdjaranettoSeriesEpisodes(rankedAdja.best.slug);
           }
         }
-
-        if (bestAdja && bestScore >= (wantYear ? 0.3 : 0.2)) {
-          const seasons = await getAdjaranettoSeriesEpisodes(bestAdja.slug);
+        if (seasons.length) {
           for (const s of seasons) {
             for (const e of s.episodes) {
                 let streamUrl = e.url;
@@ -1835,7 +1926,8 @@ export default {
         const { base, html } = await strongSearch(query);
         if (html) {
           const allCandidates = pickMovieLinksFromSearch(html, base);
-          const candidates = allCandidates.slice(0, 6);
+          const bestDetail = await chooseBestDetail(allCandidates, query);
+          const candidates = bestDetail.url ? [bestDetail.url] : [];
           // (Original Imovs series code)
           const hostRE = new RegExp("(" + "https?://secvideo\\d*\\.online/embed/\\d+/?" + "|" + "https?://video\\.sibnet\\.ru/shell\\.php\\?videoid=\\d+" + "|" + "https?://csst\\.online/embed/\\d+/?" + "|" + "https?://vkvideo\\.ru/video_ext\\.php\\?[^\"\\'\\s]+" + "|" + "https?://ok\\.ru/videoembed/\\d+" + "|" + "https?://videoapi\\.my\\.mail\\.ru/videos/embed/[^\"\\'\\s]+" + "|" + "https?://my\\.mail\\.ru/.+/video/embed/[^\"\\'\\s]+" + "|" + "https?://stormo\\.online/embed/\\d+/?" + "|" + "https?://myvi\\.ru/player/embed/html/[^\"\\'\\s]+" + ")", "ig");
           function seasonMarksFrom(page) { const marks = []; let mh; const reSeasonHdr = /(სეზონ(?:ი)?|Сезон|Season)\s*([0-9]{1,2})/gi; while ((mh = reSeasonHdr.exec(page)) !== null) marks.push({ season: parseInt(mh[2], 10), index: mh.index }); marks.sort((a, b) => a.index - b.index); return marks; }
