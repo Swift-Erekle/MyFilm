@@ -1,4 +1,4 @@
-import { extractAssignedObject, fetchWithTimeout as fetchProvider, inspectProviderHealth, parsePlayerArrays, searchExternalProvider, searchWebForProvider, safeErrorCode, titleScore } from './src/providers/index.js';
+import { animeTitleFromUrl, chooseCroconetMovieHls, extractAnimeReleaseYear, extractAssignedObject, extractCroconetPrimaryHls, fetchWithTimeout as fetchProvider, inspectProviderHealth, isAnimeEpisodePlayerUrl, parsePlayerArrays, searchExternalProvider, searchWebForProvider, safeErrorCode, titleScore } from './src/providers/index.js';
 import { corsOrigin, isAllowedProxyUrl, publicOrigin } from './src/security.js';
 
 const DEFAULT_TMDB_API_KEY = '8265bd1679663a7ea12ac168da84d2e8';
@@ -990,14 +990,7 @@ export default {
           const detailYear = extractYearFromStr(detailTitle) || extractYearFromUrl(bestMatch.url);
           if (wantedYear && detailYear && detailYear !== wantedYear) continue;
           if (Math.max(scoreTitle(query, detailTitle), engQuery ? scoreTitle(engQuery, detailTitle) : 0) < 0.2) continue;
-          const m3u8Regex = /https?:[^\s"'`,]+?\.m3u8/gi;
-          const matches = [...detailHtml.matchAll(m3u8Regex)].map(x => x[0]);
-          
-          const cleanLinks = matches.map(m => {
-              return m.replace(/\\+/g, '/').replace(/\/+/g, '/').replace(':/', '://');
-          }).filter(l => !l.includes('treiler') && !l.includes('trailer'));
-          
-          const uniqueLinks = [...new Set(cleanLinks)];
+          const uniqueLinks = extractCroconetPrimaryHls(detailHtml);
           
           if (type === 'series' && season !== undefined && episode !== undefined) {
              const matched = uniqueLinks.find(l => l.includes(`/${season}_${episode}/`) || l.includes(`/${season}-${episode}/`));
@@ -1009,18 +1002,8 @@ export default {
                 if (epLink) return [{ file: epLink, label: "Croconet.cam", rawUrl: epLink, isIframe: false }];
              }
           } else {
-             if (uniqueLinks.length) {
-                const normalizedQuery = normTitle(engQuery || query).replace(/\s+/g, '_');
-                const titleAndYearMatched = wantedYear
-                  ? uniqueLinks.find(link => extractYearFromStr(link) === wantedYear && normTitle(link).replace(/\s+/g, '_').includes(normalizedQuery))
-                  : null;
-                const yearMatched = wantedYear
-                  ? uniqueLinks.find(link => extractYearFromStr(link) === wantedYear)
-                  : null;
-                const titleMatched = uniqueLinks.find(link => normTitle(link).replace(/\s+/g, '_').includes(normalizedQuery));
-                const selected = titleAndYearMatched || titleMatched || yearMatched || (!wantedYear ? uniqueLinks[0] : null);
-                 if (selected) return [{ file: selected, label: "Croconet.cam", rawUrl: selected, isIframe: false }];
-             }
+             const selected = chooseCroconetMovieHls(uniqueLinks, [engQuery, query], wantedYear);
+             if (selected) return [{ file: selected, label: "Croconet.cam", rawUrl: selected, isIframe: false }];
              console.error(JSON.stringify({ message: 'provider_stream_match_failed', provider: 'Croconet.cam', query, wantedYear: wantedYear || null, candidates: uniqueLinks.length, page: bestMatch.url }));
            }
           }
@@ -1593,8 +1576,10 @@ export default {
     }
     // ANIMEB (search and get episodes)
     if (url.pathname === "/animeb") {
-      const q = url.searchParams.get("q");
-      if (!q) return json({ ok: false, error: "missing q" });
+      const rawQuery = (url.searchParams.get("q") || '').trim();
+      if (!rawQuery) return json({ ok: false, error: "missing q" });
+      const wantedYear = Number(url.searchParams.get('year')) || extractYearFromStr(rawQuery);
+      const q = wantedYear ? rawQuery.replace(new RegExp(`\\b${wantedYear}\\b`), '').trim() : rawQuery;
 
       try {
         const u = "https://animeb.ge/?do=search&subaction=search&story=" + encodeURIComponent(q);
@@ -1608,14 +1593,29 @@ export default {
           if (!links.some(item => item.url === m[1])) links.push({ url: m[1], title });
         }
 
-        let best = links.map(item => ({ ...item, score: titleScore(q, item.title) })).sort((a, b) => b.score - a.score)[0];
-        if (!best || best.score < 0.25) {
-          links = await searchWebForProvider({ id: 'animeb.ge', baseUrl: 'https://animeb.ge/' }, { query: q });
-          best = links.map(item => ({ ...item, score: titleScore(q, item.title) })).sort((a, b) => b.score - a.score)[0];
+        const findMatchingDetail = async candidates => {
+          const ranked = candidates.map(item => ({
+            ...item,
+            score: Math.max(titleScore(q, item.title), titleScore(q, animeTitleFromUrl(item.url))),
+          })).filter(item => item.score >= 0.25).sort((a, b) => b.score - a.score);
+          for (const candidate of ranked.slice(0, 10)) {
+            const html = await getText(candidate.url, "https://animeb.ge/");
+            const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i) || [])[1] || candidate.title;
+            const year = extractAnimeReleaseYear(html);
+            if (titleScore(q, title) < 0.35) continue;
+            if (wantedYear && year !== wantedYear) continue;
+            return { bestUrl: candidate.url, detailHtml: html };
+          }
+          return null;
+        };
+
+        let matchedDetail = await findMatchingDetail(links);
+        if (!matchedDetail) {
+          links = await searchWebForProvider({ id: 'animeb.ge', baseUrl: 'https://animeb.ge/' }, { query: q, year: wantedYear });
+          matchedDetail = await findMatchingDetail(links);
         }
-        if (!best || best.score < 0.25) return json({ ok: false, error: 'not_found', provider: 'animeb.ge' });
-        const bestUrl = best.url;
-        const detailHtml = await getText(bestUrl, "https://animeb.ge/");
+        if (!matchedDetail) return json({ ok: false, error: 'not_found', provider: 'animeb.ge' });
+        const { bestUrl, detailHtml } = matchedDetail;
 
         const episodes = [];
         const seasonBlockRe = /(\d+):\s*\[(\{[\s\S]*?\}(?:,\s*\{[\s\S]*?\})*)\s*,?\s*\]/g;
@@ -1630,17 +1630,15 @@ export default {
           let epIndex = 1;
           while ((m2 = epRe2.exec(block)) !== null) {
             let epUrl = m2[2];
-            let isIframe = true;
-            let resolvedUrl = epUrl;
-
-            // Just pass through proxy for resolution
-            resolvedUrl = `${SELF}/play?u=${encodeURIComponent(epUrl)}&ref=${encodeURIComponent(bestUrl)}`;
+            if (epUrl.startsWith('//')) epUrl = `https:${epUrl}`;
+            else epUrl = abs(bestUrl, epUrl);
+            if (!isAnimeEpisodePlayerUrl(epUrl)) continue;
 
             episodes.push({
               season: seasonNum,
               episode: epIndex,
               title: "S" + seasonNum + " / " + m2[1],
-              streams: [{ file: resolvedUrl, label: "auto", rawUrl: epUrl, isIframe: isIframe }],
+              streams: [{ file: epUrl, label: "auto", rawUrl: epUrl, isIframe: !/\.(?:m3u8|mp4)(?:[/?#]|$)/i.test(epUrl) }],
               playerIndex: 1,
               source: "animeb.ge",
               candidate: epUrl,
@@ -1655,14 +1653,15 @@ export default {
           let epIndex = 1;
           while ((m = epRe.exec(detailHtml)) !== null) {
             let epUrl = m[2];
-            let isIframe = true;
-            let resolvedUrl = `${SELF}/play?u=${encodeURIComponent(epUrl)}&ref=${encodeURIComponent(bestUrl)}`;
+            if (epUrl.startsWith('//')) epUrl = `https:${epUrl}`;
+            else epUrl = abs(bestUrl, epUrl);
+            if (!isAnimeEpisodePlayerUrl(epUrl)) continue;
 
             episodes.push({
               season: 1,
               episode: epIndex,
               title: m[1],
-              streams: [{ file: resolvedUrl, label: "auto", rawUrl: epUrl, isIframe: isIframe }],
+              streams: [{ file: epUrl, label: "auto", rawUrl: epUrl, isIframe: !/\.(?:m3u8|mp4)(?:[/?#]|$)/i.test(epUrl) }],
               playerIndex: 1,
               source: "animeb.ge",
               candidate: epUrl,

@@ -2,6 +2,8 @@ import { fetchHtml, isChallengePage, safeErrorCode } from './common.js';
 import { PROVIDERS, providerById, providersForType } from './catalog.js';
 import { searchGenericProvider } from './generic.js';
 export { extractSearchResultCandidates, searchWebForProvider } from './web-search.js';
+export { chooseCroconetMovieHls, croconetMediaIdentity, extractCroconetPrimaryHls } from './croconet.js';
+export { animeTitleFromUrl, extractAnimeReleaseYear, isAnimeEpisodePlayerUrl } from './anime.js';
 
 export { PROVIDERS, providerById, providersForType };
 export * from './common.js';

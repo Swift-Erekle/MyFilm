@@ -108,3 +108,41 @@ test('Croconet route uses validated web discovery after its internal search miss
     globalThis.fetch = originalFetch;
   }
 });
+
+test('Croconet hides a title when its page contains only a trailer or an older same-title movie', async () => {
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async input => {
+    const target = String(input);
+    if (target.includes('croconet.cam/search/')) {
+      return new Response(`
+        <a href="/movie/1701/The-Odyssey">The Odyssey</a>
+        <a href="/movie/2012/The-Odyssey">The Odyssey</a>
+      `, { status: 200 });
+    }
+    if (target === 'https://croconet.cam/movie/1701/The-Odyssey') {
+      return new Response(`
+        <title>The Odyssey</title>
+        <script>const trailer = "https://storage.croco.cam/treiler/1490/index.m3u8";</script>
+        <script>const recommendation = "https://storage.croco.cam/movies/Harry_Potter_2011_GEO/index.m3u8";</script>
+      `, { status: 200 });
+    }
+    if (target === 'https://croconet.cam/movie/2012/The-Odyssey') {
+      return new Response(`
+        <title>The Odyssey</title>
+        <script>const movie = "https://storage.croco.cam/movies/The_Odyssey_2016_GEO/index.m3u8";</script>
+        <script>const trailer = "https://storage.croco.cam/treiler/1801/index.m3u8";</script>
+      `, { status: 200 });
+    }
+    if (target.includes('google.com/search')) return new Response('<a href="/search?q=x&emsg=SG_REL">blocked</a>', { status: 200 });
+    return new Response('<html><body>no valid provider result</body></html>', { status: 200 });
+  };
+  try {
+    const response = await worker.fetch(new Request('https://myfilm.example/imovs?q=The%20Odyssey%202026&eng=The%20Odyssey&source=Croconet.cam'), env);
+    const data = await response.json();
+    assert.equal(data.ok, false);
+    assert.equal(data.error, 'streams_not_found');
+    assert.equal(data.players, undefined);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

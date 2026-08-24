@@ -35,7 +35,25 @@ const sampleTv = {
   similar: { results: [] },
 };
 
-async function mockApplicationApi(page, { geMovieAvailable = true } = {}) {
+const sampleAnime = {
+  id: 30984,
+  name: 'BLEACH',
+  original_name: 'Bleach',
+  media_type: 'tv',
+  overview: 'Anime player regression fixture.',
+  first_air_date: '2004-10-05',
+  backdrop_path: '/bleach-backdrop.jpg',
+  poster_path: '/bleach-poster.jpg',
+  vote_average: 8.4,
+  vote_count: 2200,
+  episode_run_time: [24],
+  genre_ids: [16],
+  genres: [{ id: 16, name: 'Animation' }],
+  seasons: [{ season_number: 1, episode_count: 1 }],
+  similar: { results: [] },
+};
+
+async function mockApplicationApi(page, { geMovieAvailable = true, animebAvailable = false } = {}) {
   await page.route('**/api/ge-movie/status**', route => route.fulfill({
     contentType: 'application/json',
     body: JSON.stringify({ ok: true, available: geMovieAvailable, provider: 'ge.movie' }),
@@ -84,10 +102,19 @@ async function mockApplicationApi(page, { geMovieAvailable = true } = {}) {
       body: JSON.stringify({ ok: episodes.length > 0, episodes }),
     });
   });
-  await page.route('**/animeb?**', route => route.fulfill({
-    contentType: 'application/json',
-    body: JSON.stringify({ ok: false, episodes: [] }),
-  }));
+  await page.route('**/animeb?**', route => {
+    const requestUrl = new URL(route.request().url());
+    const available = animebAvailable && requestUrl.searchParams.get('year') === '2004';
+    const rawUrl = 'https://video.sibnet.ru/shell.php?videoid=5704899';
+    const file = `https://myfilm.example/play?u=${encodeURIComponent(rawUrl)}&ref=${encodeURIComponent('https://animeb.ge/anime/365-bleach.html')}`;
+    return route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: available,
+        episodes: available ? [{ season: 1, episode: 1, source: 'animeb.ge', streams: [{ file, rawUrl, isIframe: true }] }] : [],
+      }),
+    });
+  });
   await page.route('**/animetv?**', route => route.fulfill({
     contentType: 'application/json',
     body: JSON.stringify({ ok: false, episodes: [] }),
@@ -98,6 +125,7 @@ async function mockApplicationApi(page, { geMovieAvailable = true } = {}) {
     if (/\/genre\/(?:movie|tv)\/list$/.test(url.pathname)) body = { genres: [{ id: 28, name: 'Action' }] };
     else if (/\/movie\/27205$/.test(url.pathname)) body = sampleMovie;
     else if (/\/tv\/125988$/.test(url.pathname)) body = sampleTv;
+    else if (/\/tv\/30984$/.test(url.pathname)) body = sampleAnime;
     else body = { page: 1, results: [sampleMovie], total_pages: 1, total_results: 1 };
     return route.fulfill({ contentType: 'application/json', body: JSON.stringify(body) });
   });
@@ -149,6 +177,20 @@ test('a selected series episode adds only providers that return that episode', a
   await expect(page.locator('.detail-title')).toHaveText('Silo');
   await expect(page.locator('#quality-select option')).toHaveText(['ge.movie', 'adjaranetto.com', 'imovs.ge', 'Croconet.cam']);
   await expect(page.locator('#quality-select')).toHaveValue('0');
+});
+
+test('AnimeB uses the episode embed and never opens its catalog page inside the player', async ({ page }) => {
+  const documentRequests = [];
+  page.on('request', request => {
+    if (request.resourceType() === 'document') documentRequests.push(request.url());
+  });
+  await mockApplicationApi(page, { geMovieAvailable: false, animebAvailable: true });
+  await page.goto('/tv/30984');
+  await expect(page.locator('.detail-title')).toHaveText('BLEACH');
+  await expect(page.locator('#quality-select option', { hasText: 'animeb.ge' })).toHaveCount(1);
+  await page.locator('#quality-select').selectOption({ label: 'animeb.ge' });
+  await expect.poll(() => documentRequests.some(url => /video\.sibnet\.ru\/shell\.php/.test(url))).toBe(true);
+  expect(documentRequests.some(url => /animeb\.ge\/anime\//.test(url))).toBe(false);
 });
 
 test('cards expose keyboard link semantics when content is rendered', async ({ page }) => {

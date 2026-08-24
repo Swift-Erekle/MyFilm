@@ -150,11 +150,19 @@ const Player = (() => {
         const parsed = new URL(stream.file || '', WORKER);
         if (parsed.origin === new URL(WORKER).origin && /^\/(?:play|hls)$/.test(parsed.pathname) && parsed.searchParams.get('u')) {
           target = parsed.searchParams.get('u');
-          isWorkerMediaProxy = true;
+          isWorkerMediaProxy = parsed.pathname === '/hls' || /\.(?:m3u8|mp4)(?:[/?#]|$)/i.test(target);
         }
       } catch { /* malformed candidates are rejected below */ }
 
       if (!target || /(?:vidsrc|vsembed|streamingnow\.mov|youtube\.com|youtu\.be|trailer|treiler)/i.test(target)) return null;
+      try {
+        const targetUrl = new URL(target);
+        const providerHost = String(provider || '').toLowerCase().replace(/^www\./, '');
+        const targetHost = targetUrl.hostname.toLowerCase().replace(/^www\./, '');
+        if (providerHost.includes('.') && targetHost === providerHost
+          && !/(?:embed|player|video|stream)/i.test(targetUrl.pathname)
+          && !/\.(?:m3u8|mp4)(?:[/?#]|$)/i.test(target)) return null;
+      } catch { return null; }
       const isDirectMedia = isWorkerMediaProxy || stream.isIframe === false || /\.(?:m3u8|mp4)(?:[/?#]|$)/i.test(target);
       const isHttpsIframe = /^https:\/\//i.test(target) && stream.isIframe !== false;
       if (!isDirectMedia && !isHttpsIframe) return null;
@@ -405,36 +413,15 @@ const Player = (() => {
         }
         if (handled) return; // detail.js handled it and switched player
 
-        // Try to extract iframe URL from ref and fallback to it
-        let fallbackIframeUrl = null;
-        try {
-          const urlObj = new URL(streams[0].file);
-          const ref = urlObj.searchParams.get('ref');
-          if (ref) {
-            fallbackIframeUrl = ref;
-          }
-        } catch(e) {}
-
-        if (fallbackIframeUrl && fallbackIframeUrl.includes('http')) {
-          video.style.display = 'none';
-          destroyHls();
-          iframeWrap.style.display = 'block';
-          iframeWrap.innerHTML = `
-            <iframe src="${htmlEscape(fallbackIframeUrl)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
-              allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
-              referrerpolicy="no-referrer"
-              style="width:100%;height:100%;border:none;display:block"></iframe>
-            <div class="iframe-badge">🇬🇪 Web ფლეიერი</div>`;
-        } else {
-          video.style.display = 'none';
-          iframeWrap.style.display = 'block';
-          iframeWrap.innerHTML = `
-            <div class="player-error">
-              <div class="pe-icon">⚠️</div>
-              <div class="pe-msg">ვიდეო ვერ ჩაიტვირთა (${streams.length > 1 ? 'ყველა ხარისხი' : 'წყარო'} მიუწვდომელია)</div>
-              <div class="pe-sub">სცადე სხვა წყარო ან სხვა ფლეიერი</div>
-            </div>`;
-        }
+        // A ref parameter is a provider/catalog page, never a playable iframe.
+        video.style.display = 'none';
+        iframeWrap.style.display = 'block';
+        iframeWrap.innerHTML = `
+          <div class="player-error">
+            <div class="pe-icon">⚠️</div>
+            <div class="pe-msg">ვიდეო ვერ ჩაიტვირთა (${streams.length > 1 ? 'ყველა ხარისხი' : 'წყარო'} მიუწვდომელია)</div>
+            <div class="pe-sub">სცადე სხვა წყარო ან სხვა ფლეიერი</div>
+          </div>`;
       }
     });
 
@@ -628,6 +615,7 @@ function hasCJK(str) {
         try {
           const endpoint = new URL(`${WORKER}/imovs`);
           endpoint.searchParams.set('q', q);
+          if (info.year) endpoint.searchParams.set('year', info.year);
           endpoint.searchParams.set('eng', englishTitle);
           endpoint.searchParams.set('source', provider);
           const response = await fetchWithTimeout(endpoint, { timeout: PROVIDER_REQUEST_TIMEOUT });
@@ -688,6 +676,7 @@ function hasCJK(str) {
             endpoint.searchParams.set('source', provider);
           }
           endpoint.searchParams.set('q', q);
+          if (info.year) endpoint.searchParams.set('year', info.year);
           const response = await fetchWithTimeout(endpoint, { timeout: PROVIDER_REQUEST_TIMEOUT });
           if (!response.ok) continue;
           const data = await response.json();
