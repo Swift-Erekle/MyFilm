@@ -83,6 +83,7 @@ async function mockApplicationApi(page, { geMovieAvailable = true, animebAvailab
   await page.route('**/imovs-series?**', route => {
     const url = new URL(route.request().url());
     const source = url.searchParams.get('source');
+    const isAnime = /bleach/i.test(url.searchParams.get('q') || '');
     const isSelectedEpisode = url.searchParams.get('season') === '1' && url.searchParams.get('episode') === '1';
     const available = source === 'adjaranetto.com' || source === 'imovs.ge' || (source === 'Croconet.cam' && isSelectedEpisode);
     const resultCount = source === 'imovs.ge' ? 2 : available ? 1 : 0;
@@ -92,8 +93,12 @@ async function mockApplicationApi(page, { geMovieAvailable = true, animebAvailab
       streams: [{
         label: source,
         source,
-        file: `https://myfilm.example/play?u=${encodeURIComponent(`https://${source}/embed/silo-s1e1-${index}`)}`,
-        rawUrl: `https://${source}/embed/silo-s1e1-${index}`,
+        file: isAnime && source === 'adjaranetto.com'
+          ? 'https://myfilm.example/play?u=https%3A%2F%2Fmyvi.ru%2Fplayer%2Fembed%2Fhtml%2Fold-bleach'
+          : `https://myfilm.example/play?u=${encodeURIComponent(`https://${source}/embed/silo-s1e1-${index}`)}`,
+        rawUrl: isAnime && source === 'adjaranetto.com'
+          ? 'https://myvi.ru/player/embed/html/old-bleach'
+          : `https://${source}/embed/silo-s1e1-${index}`,
         isIframe: true,
       }],
     }));
@@ -188,6 +193,7 @@ test('AnimeB uses the episode embed and never opens its catalog page inside the 
   await page.goto('/tv/30984');
   await expect(page.locator('.detail-title')).toHaveText('BLEACH');
   await expect(page.locator('#quality-select option', { hasText: 'animeb.ge' })).toHaveCount(1);
+  await expect(page.locator('#quality-select option', { hasText: 'adjaranetto.com' })).toHaveCount(0);
   await page.locator('#quality-select').selectOption({ label: 'animeb.ge' });
   await expect.poll(() => documentRequests.some(url => /video\.sibnet\.ru\/shell\.php/.test(url))).toBe(true);
   expect(documentRequests.some(url => /animeb\.ge\/anime\//.test(url))).toBe(false);

@@ -2,7 +2,7 @@ const ALLOWED_PROXY_HOSTS = [
   'adjaranetto.com', 'adjaraneti.xyz', 'mykadri.vip', 'croconet.cam', 'croco.cam', 'embed.croconet.cam',
   'ufasofilmebi.ge', 'chemikino.com', 'imovs.ge', 'asia.com.ge', 'geofilms.net', 'kinolab.cc', 'geosaitebi.tv',
   'animeb.ge', 'animetv.ge', 'csst.online', 'ok.ru', 'vkvideo.ru', 'vk.com', 'sibnet.ru', 'video.sibnet.ru',
-  'mail.ru', 'my.mail.ru', 'videoapi.my.mail.ru', 'stormo.online', 'myvi.ru', 'secvideo.online', 'drive.google.com',
+  'mail.ru', 'my.mail.ru', 'videoapi.my.mail.ru', 'stormo.online', 'secvideo.online', 'drive.google.com',
   'googleusercontent.com', 'googlevideo.com', 'incvideo.com', 'incvideo1.online', 'incvideo.online', 'fmovie-core', 'allarknow.online',
   'vidsrc-embed.ru', 'vsembed.ru', 'vidsrc.me', 'rumble.com',
 ];

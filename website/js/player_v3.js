@@ -121,6 +121,7 @@ const Player = (() => {
           canonicalUrl = parsed.searchParams.get('u');
         }
       } catch { /* the raw string remains the deduplication key */ }
+      if (/(?:https?:\/\/)?(?:[^/]+\.)?myvi\.ru(?:[/:]|$)/i.test(canonicalUrl)) return false;
       if ((provider && seenProviders.has(provider)) || seenUrls.has(canonicalUrl)) return false;
       if (provider) seenProviders.add(provider);
       seenUrls.add(canonicalUrl);
@@ -154,7 +155,7 @@ const Player = (() => {
         }
       } catch { /* malformed candidates are rejected below */ }
 
-      if (!target || /(?:vidsrc|vsembed|streamingnow\.mov|youtube\.com|youtu\.be|trailer|treiler)/i.test(target)) return null;
+      if (!target || /(?:vidsrc|vsembed|streamingnow\.mov|(?:https?:\/\/)?(?:[^/]+\.)?myvi\.ru(?:[/:]|$)|youtube\.com|youtu\.be|trailer|treiler)/i.test(target)) return null;
       try {
         const targetUrl = new URL(target);
         const providerHost = String(provider || '').toLowerCase().replace(/^www\./, '');

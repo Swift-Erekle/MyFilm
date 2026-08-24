@@ -4,6 +4,7 @@ import {
   extractAssignedObject,
   extractPlayerUrls,
   isChallengePage,
+  isPlayableCandidate,
   parsePlayerArrays,
   titleScore,
 } from '../src/providers/common.js';
@@ -49,4 +50,9 @@ test('player extraction rejects embeds known to fail in the application player',
     <video src="https://cdn.example.com/movie/master.m3u8"></video>
   `;
   assert.deepEqual(extractPlayerUrls(html, 'https://example.com/'), ['https://cdn.example.com/movie/master.m3u8']);
+});
+
+test('retired myvi.ru embeds are never accepted as playable sources', () => {
+  assert.equal(isPlayableCandidate('https://myvi.ru/player/embed/html/old-video'), false);
+  assert.equal(isPlayableCandidate('https://videoapi.my.mail.ru/videos/embed/mail/video/1'), true);
 });

@@ -1,4 +1,4 @@
-import { animeTitleFromUrl, chooseCroconetMovieHls, extractAnimeReleaseYear, extractAssignedObject, extractCroconetPrimaryHls, fetchWithTimeout as fetchProvider, inspectProviderHealth, isAnimeEpisodePlayerUrl, parsePlayerArrays, searchExternalProvider, searchWebForProvider, safeErrorCode, titleScore } from './src/providers/index.js';
+import { animeTitleFromUrl, chooseCroconetMovieHls, extractAnimeReleaseYear, extractAssignedObject, extractCroconetPrimaryHls, fetchWithTimeout as fetchProvider, inspectProviderHealth, isAnimeEpisodePlayerUrl, isPlayableCandidate, parsePlayerArrays, searchExternalProvider, searchWebForProvider, safeErrorCode, titleScore } from './src/providers/index.js';
 import { corsOrigin, isAllowedProxyUrl, publicOrigin } from './src/security.js';
 
 const DEFAULT_TMDB_API_KEY = '8265bd1679663a7ea12ac168da84d2e8';
@@ -654,26 +654,9 @@ export default {
       return { data: [] };
     }
 
-    async function myviResolve(embedUrl) {
-      const html = await getText(embedUrl, "https://myvi.ru/");
-      const fixed = html.replace(/\\\//g, "/");
-      const links = extractMediaLinks(fixed).concat(
-        extractMediaLinks(decodeBase64Blobs(fixed))
-      );
-      if (links.length)
-        return {
-          data: normalizeAndSort(
-            links.map((u) => ({
-              file: u,
-              label: /\.m3u8/i.test(u) ? "HLS" : "auto",
-            }))
-          ),
-        };
-      return { data: [] };
-    }
-
     async function resolveCandidate(u, ref) {
       try {
+        if (/https?:\/\/(?:[^/]+\.)?myvi\.ru(?:[/:]|$)/i.test(u)) return { data: [] };
         if (/\.(mp4|m3u8)(\/|\?|$)/i.test(u)) {
           return { data: [{ file: u, label: /\.m3u8/i.test(u) ? "HLS" : "auto" }] };
         }
@@ -694,9 +677,6 @@ export default {
         )
           return await mailruResolve(u);
         if (/stormo\.online\/embed\//i.test(u)) return await stormoResolve(u);
-        if (/myvi\.ru\/player\/embed\/html\//i.test(u))
-          return await myviResolve(u);
-
         const html = await getText(u, ref || u);
         let found = extractMediaLinks(html);
         if (!found.length) found = extractMediaLinks(decodeBase64Blobs(html));
@@ -1135,7 +1115,7 @@ export default {
 
         const nextFData = [...html.matchAll(/<script>self\.__next_f.*?<\/script>/g)].join('');
         const matches = [...nextFData.matchAll(/\\"url\\":\\"?([^"\\]+)\\"?/g)];
-        const validUrls = matches.map(m => m[1]).filter(u => /(sibnet\.ru|incvideo|secvideo|csst\.online|vkvideo|myvi|mykadri\.vip|embed|\.mp4|\.m3u8)/i.test(u));
+        const validUrls = matches.map(m => m[1].replace(/\\\//g, '/')).filter(isPlayableCandidate);
         if (validUrls.length) return validUrls[0];
       } catch (error) {
         console.error(JSON.stringify({ message: 'provider_detail_failed', provider: 'adjaranetto.com', error: error instanceof Error ? error.message : String(error) }));
@@ -1230,16 +1210,22 @@ export default {
           const playersStr = m[5] || '';
 
           if (seasons[sId]) {
-            // Extract all player URLs from the players JSON blob
+            // Validate every candidate. Some old records still point to
+            // myvi.ru, which is now a parked domain rather than a video player.
             const allPlayerUrls = [...playersStr.matchAll(/\\"url\\":\\"([^"]+?)\\"/g)].map(p => p[1]);
-            // Prefer csst.online or incvideo or mykadri.vip direct link
-            const bestUrl = allPlayerUrls.find(u => /csst\.online/i.test(u))
-              || allPlayerUrls.find(u => /mykadri\.vip/i.test(u))
-              || allPlayerUrls.find(u => /incvideo/i.test(u))
-              || epUrl;
+            const playableUrls = [...new Set([...allPlayerUrls, epUrl]
+              .map(candidate => candidate.replace(/\\\//g, '/'))
+              .filter(isPlayableCandidate))];
+            const bestUrl = playableUrls.find(u => /csst\.online/i.test(u))
+              || playableUrls.find(u => /mykadri\.vip/i.test(u))
+              || playableUrls.find(u => /incvideo/i.test(u))
+              || playableUrls.find(u => /sibnet\.ru/i.test(u))
+              || playableUrls.find(u => /mail\.ru/i.test(u))
+              || playableUrls.find(u => /ok\.ru|vkvideo/i.test(u))
+              || playableUrls[0];
 
             // Avoid duplicate episodes
-            if (!seasons[sId].episodes.find(e => e.episode === epNum)) {
+            if (bestUrl && !seasons[sId].episodes.find(e => e.episode === epNum)) {
               seasons[sId].episodes.push({ episode: epNum, title: epTitle, url: bestUrl });
             }
           }
@@ -1397,7 +1383,7 @@ export default {
       const source = url.searchParams.get("source");
       if (!q) return json({ ok: false, error: "Missing q" });
 
-      const wantYear = extractYearFromStr(q);
+      const wantYear = Number(url.searchParams.get('year')) || extractYearFromStr(q);
       let allPlayers = [];
 
       let cleanQ = wantYear ? q.replace(new RegExp('\\b' + wantYear + '\\b'), '').trim() : q;
@@ -1535,7 +1521,7 @@ export default {
                   try { candidate = atob(candidate); } catch { /* not base64 */ }
                 }
                 candidate = abs(best.url, candidate);
-                if (/(?:secvideo|sibnet|csst\.online\/embed|vkvideo|ok\.ru\/videoembed|mail\.ru|stormo|myvi|\.m3u8|\.mp4)/i.test(candidate)) candidates.push(candidate);
+                if (isPlayableCandidate(candidate)) candidates.push(candidate);
               }
               const streams = [];
               for (const candidate of uniq(candidates).slice(0, 8)) {
@@ -1742,7 +1728,7 @@ export default {
     if (url.pathname === "/imovs-series") {
       const query = (url.searchParams.get("q") || "").trim();
       const source = url.searchParams.get("source");
-      const wantYear = extractYearFromStr(query);
+      const wantYear = Number(url.searchParams.get('year')) || extractYearFromStr(query);
       
       let cleanQ = query.replace(/\s*\(\d{4}\)|\s*\d{4}$/, "").trim();
       cleanQ = cleanQ
@@ -1928,7 +1914,7 @@ export default {
           const bestDetail = await chooseBestDetail(allCandidates, query);
           const candidates = bestDetail.url ? [bestDetail.url] : [];
           // (Original Imovs series code)
-          const hostRE = new RegExp("(" + "https?://secvideo\\d*\\.online/embed/\\d+/?" + "|" + "https?://video\\.sibnet\\.ru/shell\\.php\\?videoid=\\d+" + "|" + "https?://csst\\.online/embed/\\d+/?" + "|" + "https?://vkvideo\\.ru/video_ext\\.php\\?[^\"\\'\\s]+" + "|" + "https?://ok\\.ru/videoembed/\\d+" + "|" + "https?://videoapi\\.my\\.mail\\.ru/videos/embed/[^\"\\'\\s]+" + "|" + "https?://my\\.mail\\.ru/.+/video/embed/[^\"\\'\\s]+" + "|" + "https?://stormo\\.online/embed/\\d+/?" + "|" + "https?://myvi\\.ru/player/embed/html/[^\"\\'\\s]+" + ")", "ig");
+          const hostRE = new RegExp("(" + "https?://secvideo\\d*\\.online/embed/\\d+/?" + "|" + "https?://video\\.sibnet\\.ru/shell\\.php\\?videoid=\\d+" + "|" + "https?://csst\\.online/embed/\\d+/?" + "|" + "https?://vkvideo\\.ru/video_ext\\.php\\?[^\"\\'\\s]+" + "|" + "https?://ok\\.ru/videoembed/\\d+" + "|" + "https?://videoapi\\.my\\.mail\\.ru/videos/embed/[^\"\\'\\s]+" + "|" + "https?://my\\.mail\\.ru/.+/video/embed/[^\"\\'\\s]+" + "|" + "https?://stormo\\.online/embed/\\d+/?" + ")", "ig");
           function seasonMarksFrom(page) { const marks = []; let mh; const reSeasonHdr = /(სეზონ(?:ი)?|Сезон|Season)\s*([0-9]{1,2})/gi; while ((mh = reSeasonHdr.exec(page)) !== null) marks.push({ season: parseInt(mh[2], 10), index: mh.index }); marks.sort((a, b) => a.index - b.index); return marks; }
           function episodeMarksFrom(page) { const marks = []; let eh; const reEpHdr = /(სერია|Серия|Episode)\s*0?(\d{1,3})/gi; while ((eh = reEpHdr.exec(page)) !== null) marks.push({ num: parseInt(eh[2], 10), index: eh.index }); marks.sort((a, b) => a.index - b.index); return marks; }
           function seasonForIndex(idx, marks) { let s = 1; for (const mk of marks) { if (idx >= mk.index) s = mk.season; else break; } return s; }
@@ -1950,7 +1936,7 @@ export default {
               if (http) u = http[0].replace(/^\/\//, "https://");
               if (/^[A-Za-z0-9+/=]{20,}$/.test(u)) { try { const dec = atob(u); const m = dec.match(/https?:\/\/[^"' \t\r\n]+/i); u = m ? m[0] : dec; } catch { /* ignore malformed encoded candidate */ } }
               u = abs(pageUrl, u);
-              if (/(secvideo|sibnet|csst\.online\/embed|vkvideo\.ru\/video_ext|ok\.ru\/videoembed|videoapi\.my\.mail\.ru\/videos\/embed|my\.mail\.ru\/.+\/video\/embed|stormo\.online\/embed|myvi\.ru\/player\/embed\/html)/i.test(u)) ordered.push({ url: u, index: atr.index });
+              if (isPlayableCandidate(u)) ordered.push({ url: u, index: atr.index });
             }
             const decoded = decodeBase64Blobs(page);
             let dm;
@@ -2127,7 +2113,6 @@ export default {
         "https://csst.online/",
         "https://my.mail.ru/",
         "https://stormo.online/",
-        "https://myvi.ru/",
         null,
       ]);
       const upstream = await tryPlay(u, refList, req.headers.get("Range"));

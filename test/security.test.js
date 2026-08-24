@@ -6,6 +6,7 @@ test('proxy rejects local, private and plain HTTP targets', () => {
   assert.equal(isAllowedProxyUrl('http://csst.online/file.m3u8'), false);
   assert.equal(isAllowedProxyUrl('https://127.0.0.1/file.m3u8'), false);
   assert.equal(isAllowedProxyUrl('https://192.168.1.5/file.m3u8'), false);
+  assert.equal(isAllowedProxyUrl('https://myvi.ru/player/embed/html/old-video'), false);
 });
 
 test('proxy permits an allowlisted HTTPS media host', () => {
