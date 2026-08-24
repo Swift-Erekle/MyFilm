@@ -8,7 +8,6 @@ const API = (() => {
 
   async function req(endpoint, extra = {}) {
     const url = new URL(CONFIG.TMDB_BASE_URL + endpoint);
-    url.searchParams.set('api_key', CONFIG.TMDB_API_KEY);
     url.searchParams.set('language', CONFIG.TMDB_LANGUAGE);
     Object.entries(extra).forEach(([k,v]) => url.searchParams.set(k, v));
 
@@ -50,7 +49,8 @@ const API = (() => {
     }
 
     try {
-      let r = await fetch(url);
+      let r = await fetch(url, { headers: { Accept: 'application/json' } });
+      if (!r.ok) throw new Error(`TMDB_${r.status}`);
       let d = await r.json();
 
       const cjkRegex = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uFAFF\uFF66-\uFF9F]/;
@@ -65,7 +65,8 @@ const API = (() => {
       // Fallback to English if no results, OR if the returned main title is Japanese/Chinese
       if ((!d.results?.length && !d.title && !d.name) || d.success === false || isJapaneseData(d)) {
         url.searchParams.set('language', CONFIG.TMDB_LANGUAGE_FALLBACK);
-        r = await fetch(url);
+        r = await fetch(url, { headers: { Accept: 'application/json' } });
+        if (!r.ok) throw new Error(`TMDB_${r.status}`);
         d = await r.json();
       }
       d = cleanData(d);
@@ -74,7 +75,8 @@ const API = (() => {
     } catch {
       url.searchParams.set('language', CONFIG.TMDB_LANGUAGE_FALLBACK);
       try {
-        const r = await fetch(url);
+        const r = await fetch(url, { headers: { Accept: 'application/json' } });
+        if (!r.ok) throw new Error(`TMDB_${r.status}`);
         let d = await r.json();
         d = cleanData(d);
         _cache.set(key, d);

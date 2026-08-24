@@ -1,0 +1,16 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "myfilm-worker",
+  "main": "cloudflare.js",
+  "compatibility_date": "2026-08-24",
+  "compatibility_flags": ["nodejs_compat"],
+  "observability": {
+    "enabled": true,
+    "logs": { "head_sampling_rate": 1 },
+    "traces": { "enabled": true, "head_sampling_rate": 0.1 }
+  },
+  "vars": {
+    "PUBLIC_ORIGIN": "https://myfilm-production.up.railway.app",
+    "ALLOWED_ORIGINS": "https://myfilm-production.up.railway.app"
+  }
+}

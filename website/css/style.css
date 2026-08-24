@@ -37,6 +37,76 @@
   --transition:  0.26s cubic-bezier(0.4,0,0.2,1);
 }
 
+/* Accessibility, Android TV and app-download dialog */
+:where(a, button, input, select, [role="link"]):focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 4px;
+  box-shadow: 0 0 0 6px rgba(229, 9, 20, 0.72);
+}
+
+.movie-card:focus-visible {
+  transform: translateY(-8px) scale(1.035);
+  z-index: 5;
+}
+
+.app-download-dialog {
+  width: min(440px, calc(100vw - 32px));
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 20px;
+  padding: 34px;
+  color: #fff;
+  background: linear-gradient(145deg, #1c1c25, #0a0a0f);
+  text-align: center;
+  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.75);
+}
+
+.app-download-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.app-download-dialog h2 { margin: 12px 0 8px; }
+.app-download-dialog p { color: #b8b8c4; line-height: 1.55; margin-bottom: 24px; }
+.dialog-app-icon {
+  width: 70px;
+  height: 70px;
+  display: grid;
+  place-items: center;
+  margin: 0 auto;
+  border-radius: 18px;
+  background: #e50914;
+  font-size: 30px;
+}
+.dialog-close {
+  position: absolute;
+  top: 12px;
+  right: 14px;
+  width: 36px;
+  height: 36px;
+  border: 0;
+  border-radius: 50%;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.09);
+  font-size: 24px;
+  cursor: pointer;
+}
+.dialog-download { display: inline-flex; text-decoration: none; }
+
+@media (min-width: 1600px) and (hover: none) {
+  .nav-links a, .nav-download-btn, button { min-height: 48px; }
+  .movie-card { min-width: 220px; }
+  body { font-size: 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 /* ===== Reset ===== */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html { scroll-behavior: smooth; overflow-x: hidden; }
@@ -1054,6 +1124,7 @@ footer {
 
 @media (max-width: 800px) {
   :root { --card-w: 135px; --card-h: 202px; --nav-h: 60px; }
+  #navbar { padding: 0 14px; }
   
   .nav-brand {
     order: 1;
@@ -1069,6 +1140,16 @@ footer {
     margin-left: auto;
     margin-right: 8px;
   }
+  .nav-search-wrap { display: none; }
+  .nav-download-btn {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border-radius: 50%;
+    justify-content: center;
+  }
+  .nav-download-btn span { font-size: 0; }
+  .nav-download-btn span::before { content: '📲'; font-size: 18px; }
   
   .nav-links {
     position: fixed;

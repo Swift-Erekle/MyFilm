@@ -1,29 +1,108 @@
+import { extractAssignedObject, fetchWithTimeout as fetchProvider, inspectProviderHealth, parsePlayerArrays, searchExternalProvider, safeErrorCode, titleScore } from './src/providers/index.js';
+import { corsOrigin, isAllowedProxyUrl, publicOrigin } from './src/security.js';
+
 export default {
-  async fetch(req) {
+  async fetch(req, env = {}, ctx = { waitUntil: () => {} }) {
+    const allowedCorsOrigin = corsOrigin(req, env);
     if (req.method === "OPTIONS") {
+      if (!allowedCorsOrigin) {
+        return new Response(null, { status: 403 });
+      }
       return new Response(null, {
         status: 204,
         headers: {
-          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Origin": allowedCorsOrigin,
           "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
           "Access-Control-Allow-Headers":
             "Content-Type, X-Requested-With, Authorization, Accept, Referer, Origin, Range",
           "Access-Control-Max-Age": "86400",
+          Vary: "Origin",
         },
       });
     }
 
     const url = new URL(req.url);
-    const SELF = url.origin;
+    const SELF = publicOrigin(req, env);
 
-    const json = (obj, status = 200) =>
-      new Response(JSON.stringify(obj), {
+    const json = (obj, status = 200, extraHeaders = {}) => {
+      const payload = {
+        ...obj,
+        provider: obj.provider ?? null,
+        errorCode: obj.errorCode ?? (obj.ok === false ? safeErrorCode(obj.error || obj.message) : null),
+        message: obj.message ?? (obj.ok === false ? 'წყარო დროებით მიუწვდომელია.' : null),
+      };
+      const headers = {
+        "Content-Type": "application/json; charset=utf-8",
+        Vary: "Origin",
+        ...extraHeaders,
+      };
+      if (allowedCorsOrigin) headers["Access-Control-Allow-Origin"] = allowedCorsOrigin;
+      return new Response(JSON.stringify(payload), {
         status,
-        headers: {
-          "Content-Type": "application/json; charset=utf-8",
-          "Access-Control-Allow-Origin": "*",
-        },
+        headers,
       });
+    };
+
+    function buildAnimeTvEpisodes(detailHtml, pageUrl) {
+      const players = parsePlayerArrays(extractAssignedObject(detailHtml, 'allPlayers'));
+      const maxEpisodes = Math.max(0, ...players.map(player => player.urls.length));
+      const seasonMatch = pageUrl.match(/season-(\d+)/i) || detailHtml.match(/(?:სეზონი|season)\s*(\d+)/i);
+      const season = seasonMatch ? Number(seasonMatch[1]) : 1;
+      const episodes = [];
+      for (let episode = 1; episode <= maxEpisodes; episode += 1) {
+        const streams = players.flatMap((player, index) => {
+          const rawUrl = player.urls[episode - 1];
+          if (!rawUrl) return [];
+          return [{
+            file: `${SELF}/play?u=${encodeURIComponent(rawUrl)}&ref=${encodeURIComponent(pageUrl)}`,
+            label: `F${index + 1}`,
+            rawUrl,
+            isIframe: true,
+          }];
+        });
+        if (streams.length) episodes.push({ season, episode, title: `S${season} / E${episode}`, streams, playerIndex: 1, source: 'animetv.ge', candidate: streams[0].rawUrl, pageUrl });
+      }
+      return episodes;
+    }
+
+    if (url.pathname === '/api/providers/status') {
+      const type = url.searchParams.get('type') || '';
+      if (type && !['movie', 'tv', 'anime'].includes(type)) {
+        return json({ ok: false, error: 'invalid_type', message: 'უცნობი მედიის ტიპი.' }, 400);
+      }
+      const cacheKey = new Request(`${url.origin}/api/providers/status?type=${encodeURIComponent(type)}`);
+      const edgeCache = typeof caches !== 'undefined' ? caches.default : null;
+      if (edgeCache) {
+        const cached = await edgeCache.match(cacheKey);
+        if (cached) return cached;
+      }
+      const providers = await inspectProviderHealth(type);
+      const response = json({ ok: true, providers }, 200, { 'Cache-Control': 'public, max-age=120, s-maxage=300' });
+      if (edgeCache) ctx.waitUntil(edgeCache.put(cacheKey, response.clone()));
+      return response;
+    }
+
+    if (url.pathname.startsWith('/api/tmdb/')) {
+      if (req.method !== 'GET') return json({ ok: false, error: 'method_not_allowed' }, 405);
+      const suffix = url.pathname.slice('/api/tmdb'.length);
+      if (!/^\/(?:movie|tv|trending|discover|search|genre)\//.test(suffix)) {
+        return json({ ok: false, error: 'tmdb_path_not_allowed', message: 'TMDB endpoint დაუშვებელია.' }, 400);
+      }
+      const token = env.TMDB_READ_TOKEN;
+      const apiKey = env.TMDB_API_KEY;
+      if (!token && !apiKey) return json({ ok: false, error: 'tmdb_not_configured', message: 'TMDB token არ არის კონფიგურირებული.' }, 503);
+      const target = new URL(`https://api.themoviedb.org/3${suffix}`);
+      for (const [key, value] of url.searchParams) {
+        if (!['api_key', 'token'].includes(key)) target.searchParams.append(key, value);
+      }
+      if (!target.searchParams.has('language')) target.searchParams.set('language', 'ka-GE');
+      if (!token) target.searchParams.set('api_key', apiKey);
+      const headers = token ? { Authorization: `Bearer ${token}`, Accept: 'application/json' } : { Accept: 'application/json' };
+      const response = await fetch(target, { headers, cf: { cacheTtl: 600, cacheEverything: true } });
+      const outputHeaders = new Headers({ 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'public, max-age=300, s-maxage=600', Vary: 'Origin' });
+      if (allowedCorsOrigin) outputHeaders.set('Access-Control-Allow-Origin', allowedCorsOrigin);
+      return new Response(response.body, { status: response.status, headers: outputHeaders });
+    }
 
     /* ================= helpers ================= */
     function htmlHeaders() {
@@ -44,22 +123,23 @@ export default {
       h.set("Referer", fixed);
       try {
         h.set("Origin", new URL(fixed).origin);
-      } catch { }
+      } catch { /* optional referer was not a valid absolute URL */ }
       return h;
     }
 
     function looksLikeCF(t) {
-      return /Attention Required|Just a moment|Cloudflare/i.test(t || "");
+      const sample = String(t || "").slice(0, 30000);
+      return /<title>\s*(?:Attention Required|Just a moment|Access denied)\b/i.test(sample) || /cf-chl-(?:opt|widget|bypass)|challenge-platform\/h\/g\/orchestrate|cloudflare ray id/i.test(sample);
     }
 
     async function getTextDirect(target, referer) {
       const h = withRef(htmlHeaders(), referer);
       try {
-        const r = await fetch(target, {
+        const r = await fetchProvider(target, {
           headers: h,
           redirect: "follow",
           cf: { cacheTtl: 0, cacheEverything: false },
-        });
+        }, { timeoutMs: 10_000 });
         return await r.text();
       } catch (e) {
         return `__FETCH_ERROR__:${String(e)}`;
@@ -133,14 +213,14 @@ export default {
     }
 
     function extractGenericVideoUrls(txt) {
-      // бѓ–бѓќбѓ’бѓЇбѓ”бѓ  url бѓђбѓ  бѓ›бѓ—бѓђбѓ•бѓ бѓ“бѓ”бѓ‘бѓђ .mp4вЂ“бѓ–бѓ” (бѓ›бѓђбѓ’. okcdn.ru/?type=3&id=...).
+      // ზოგჯერ URL არ მთავრდება .mp4-ზე (მაგ. okcdn.ru/?type=3&id=...).
       const out = [];
       const re = /"(https?:\/\/[^"']+?)"/gi;
       let m;
       while ((m = re.exec(txt)) !== null) {
         const u = m[1];
         if (/https?:\/\/[^"']+/.test(u) && !/\.m3u8(?:\?|$)/i.test(u)) {
-          // бѓ©бѓђбѓ•бѓўбѓќбѓ•бѓќбѓ—, бѓ—бѓЈ бѓ”бѓЎ player-бѓЎ a/v url-бѓ”бѓ‘бѓЎ бѓ’бѓђбѓ•бѓЎ
+          // დავტოვოთ, თუ ეს player-ის audio/video URL-ებს ჰგავს.
           if (/okcdn\.ru\/\?/.test(u) || /mycdn|mail\.ru|vkuser|secvideo/i.test(u)) {
             out.push(u);
           }
@@ -157,7 +237,7 @@ export default {
       while ((m = re.exec(txt)) !== null) {
         try {
           out.push(atob(m[1]));
-        } catch { }
+        } catch { /* ignore malformed base64 fragments */ }
       }
       return out.join("\n");
     }
@@ -169,7 +249,7 @@ export default {
       return m ? parseInt(m[2], 10) : 0;
     }
 
-    // MP4 бѓ¬бѓбѓњ, HLS бѓЈбѓ™бѓђбѓњ
+    // MP4 წინ, HLS უკან.
     function normalizeAndSort(streams) {
       const out = [];
       (streams || []).forEach((it) => {
@@ -259,7 +339,7 @@ export default {
       // Bonus: if the normalized query appears verbatim in the target
       const nq = normTitle(q);
       const nt = normTitle(t);
-      if (nt === nq) return 1.5; // exact match вЂ” highest priority
+      if (nt === nq) return 1.5; // exact match — highest priority
       if (nt.includes(nq)) return 1.2; // query fully contained in target
       const qt = tokens(q);
       const pt = tokens(t);
@@ -310,8 +390,8 @@ export default {
           const j = JSON.parse(txt);
           if (Array.isArray(j.data) && j.data.length)
             return { data: normalizeAndSort(j.data) };
-        } catch { }
-      } catch { }
+        } catch { /* response was HTML rather than JSON; HTML fallback follows */ }
+      } catch { /* API endpoint unavailable; HTML fallback follows */ }
       const html = await getText(embedUrl, "https://csst.online/");
       const list = normalizeAndSort(
         extractMediaLinks(html)
@@ -372,11 +452,11 @@ export default {
               });
             }
           });
-        } catch { }
+        } catch { /* one malformed video entry must not hide the remaining entries */ }
       }
       if (vids.length) return { data: normalizeAndSort(vids) };
 
-      // 3) бѓ¤бѓќбѓљбѓ-бѓљбѓбѓњбѓ™бѓ”бѓ‘бѓ
+      // 3) fallback ბმულები
       const links = normalizeAndSort(
         extractMediaLinks(fixed).map((u) => ({
           file: u,
@@ -385,7 +465,7 @@ export default {
       );
       if (links.length) return { data: links };
 
-      // 4) бѓ–бѓќбѓ’бѓђбѓ“бѓ URL-бѓ”бѓ‘бѓбѓЄ бѓ•бѓЄбѓђбѓ“бѓќбѓ— (okcdn.ru/?type=3 ...)
+      // 4) ზოგადი URL-ებიც ვცადოთ (okcdn.ru/?type=3 ...)
       const gen = extractGenericVideoUrls(fixed).map((u) => ({
         file: u,
         label: "auto",
@@ -442,7 +522,7 @@ export default {
       return { data: [{ file: embedUrl, label: "auto" }] };
     }
 
-    // animeb.ge resolver вЂ“ extracts iframe src and resolves the embedded video URL
+    // animeb.ge resolver — extracts iframe src and resolves the embedded video URL
     async function animebResolve(pageUrl) {
       // Fetch the page HTML
       const html = await getText(pageUrl, pageUrl);
@@ -457,13 +537,13 @@ export default {
       return { data: [] };
     }
 
-    // my.mail.ru / videoapi.my.mail.ru вЂ” бѓ’бѓђбѓ«бѓљбѓбѓ”бѓ бѓ”бѓ‘бѓЈбѓљбѓ бѓ бѓ”бѓ–бѓќбѓљбѓ•бѓ”бѓ бѓ (бѓћбѓбѓ бѓ“бѓђбѓћбѓбѓ  iframe-бѓбѓ“бѓђбѓњ)
+    // my.mail.ru / videoapi.my.mail.ru — გაძლიერებული resolver (პირდაპირ iframe-იდან)
     async function mailruResolve(embedUrl) {
       const ref = 'https://my.mail.ru/';
       const html = await getText(embedUrl, ref);
       const fixed = html.replace(/\\\//g, '/').replace(/\\u0026/g, '&');
 
-      // бѓ›бѓ§бѓбѓЎбѓбѓ”бѓ бѓ HLS (бѓбѓЁбѓ•бѓбѓђбѓ—бѓбѓђ, бѓ›бѓђбѓ’бѓ бѓђбѓ› бѓ“бѓђбѓ•бѓўбѓќбѓ•бѓќбѓ—)
+      // მყისიერი HLS (იშვიათია, მაგრამ დავტოვოთ)
       const m3 = fixed.match(/"(?:manifest|m3u8|hlsManifestUrl|hlsMasterPlaylistUrl)"\s*:\s*"([^"]+\.m3u8[^"]*)"/i);
       if (m3 && m3[1]) return { data: normalizeAndSort([{ file: m3[1], label: 'HLS' }]) };
 
@@ -491,10 +571,10 @@ export default {
         }
       }
 
-      // embed бѓ’бѓ•бѓ”бѓ бѓ“бѓбѓ“бѓђбѓњбѓђбѓЄ бѓђбѓ›бѓќбѓбѓ™бѓ бѓбѓ¤бѓќбѓЎ mp4/m3u8
+      // embed გვერდიდანაც ამოიკრიფოს MP4/HLS.
       extractMediaLinks(fixed).forEach(u => collected.push({ file: u, label: /\.m3u8/i.test(u) ? 'HLS' : 'auto' }));
 
-      // бѓ–бѓќбѓ’бѓђбѓ“бѓ бѓ•бѓбѓ“бѓ”бѓќ URL-бѓ”бѓ‘бѓбѓЄ (mp4 query-бѓ”бѓ‘бѓбѓ—)
+      // ზოგადი ვიდეო URL-ებიც (MP4 query-ებით)
       extractGenericVideoUrls(fixed).forEach(u => collected.push({ file: u, label: 'auto' }));
 
       return { data: normalizeAndSort(collected) };
@@ -585,27 +665,13 @@ export default {
       }
     }
 
-    /* ================= geosaitebi API ================= */
-    function scoreTitle(query, target) {
-      if (!query || !target) return 0;
-      const qClean = query.toLowerCase().replace(/[^a-z0-9\u10D0-\u10FA]/gi, '');
-      const tClean = target.toLowerCase().replace(/[^a-z0-9\u10D0-\u10FA]/gi, '');
-      if (qClean === tClean) return 1;
-      if (tClean.includes(qClean) || qClean.includes(tClean)) return 0.8;
-      return 0;
-    }
-
-    async function searchGeosaitebi(q, type) {
-      return [];
-    }
-
     async function searchUfasofilmebi(query, type, engQuery) {
       try {
         const searchQuery = engQuery || query;
         const searchUrl = 'https://ufasofilmebi.ge/?s=' + encodeURIComponent(searchQuery);
-        const r = await fetch(searchUrl, {
+        const r = await fetchProvider(searchUrl, {
           headers: { 'User-Agent': 'Mozilla/5.0' }
-        });
+        }, { timeoutMs: 10_000 });
         const html = await r.text();
         
         const links = [...html.matchAll(/href=["'](https?:\/\/ufasofilmebi\.ge)?(\/[^"\'\s/]+\/)["']/gi)];
@@ -648,7 +714,7 @@ export default {
         }
 
         if (bestMatch && bestScore > 0.2) {
-          const detailR = await fetch(bestMatch.url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+          const detailR = await fetchProvider(bestMatch.url, { headers: { 'User-Agent': 'Mozilla/5.0' } }, { timeoutMs: 10_000 });
           const detailHtml = await detailR.text();
           
           if (type === 'movie') {
@@ -661,7 +727,9 @@ export default {
                           if (embedUrl.startsWith('//')) embedUrl = 'https:' + embedUrl;
                           return [{ file: embedUrl, label: "ufasofilmebi.ge", source: "ufasofilmebi.ge" }];
                       }
-                  } catch(e) {}
+                  } catch (error) {
+                    console.error(JSON.stringify({ message: 'provider_payload_invalid', provider: 'ufasofilmebi.ge', section: 'servers', error: error instanceof Error ? error.message : String(error) }));
+                  }
               }
           } else if (type === 'series') {
               const linksMatch = detailHtml.match(/var\s+links\s*=\s*(\{[\s\S]*?\});/);
@@ -683,7 +751,9 @@ export default {
                           seasons.push({ season: parseInt(sNum), episodes: eps });
                       }
                       return seasons;
-                  } catch(e) {}
+                  } catch (error) {
+                    console.error(JSON.stringify({ message: 'provider_payload_invalid', provider: 'ufasofilmebi.ge', section: 'episodes', error: error instanceof Error ? error.message : String(error) }));
+                  }
               }
           }
         }
@@ -698,14 +768,14 @@ export default {
         const searchQuery = engQuery || query;
         const searchUrl = 'https://chemikino.com/index.php?do=search';
         const bodyText = 'do=search&subaction=search&story=' + encodeURIComponent(searchQuery);
-        const r = await fetch(searchUrl, {
+        const r = await fetchProvider(searchUrl, {
           method: 'POST',
           headers: {
             'User-Agent': 'Mozilla/5.0',
             'Content-Type': 'application/x-www-form-urlencoded'
           },
           body: bodyText
-        });
+        }, { timeoutMs: 10_000 });
         const html = await r.text();
         
         const links = [...html.matchAll(/href=["'](https?:\/\/chemikino\.com)?(\/\d+-[^"']+\.html)["']/gi)];
@@ -775,7 +845,7 @@ export default {
       try {
         const searchQuery = engQuery || query;
         const searchUrl = 'https://croconet.cam/search/' + encodeURIComponent(searchQuery);
-        const r = await fetch(searchUrl, { headers: htmlHeaders() });
+        const r = await fetchProvider(searchUrl, { headers: htmlHeaders() }, { timeoutMs: 10_000 });
         const html = await r.text();
         const links = [...html.matchAll(/href=["'](https?:\/\/croconet\.cam)?(\/(?:movie|show|series|serial)\/\d+\/[^"']+)["']/gi)];
         
@@ -847,9 +917,9 @@ export default {
     async function searchAdjaranetto(q) {
       try {
         const doSearch = async (query) => {
-          const r = await fetch("https://adjaranetto.com/search?q=" + encodeURIComponent(query), {
+          const r = await fetchProvider("https://adjaranetto.com/search?q=" + encodeURIComponent(query), {
             headers: htmlHeaders()
-          });
+          }, { timeoutMs: 10_000 });
           const html = await r.text();
           const scripts = [...html.matchAll(/<script>self\.__next_f.*?<\/script>/gs)];
           if (!scripts.length) return [];
@@ -858,7 +928,7 @@ export default {
           const movies = [];
           const seen = new Set();
 
-          // Structure in escaped Next.js JSON: \"id\":10792,\"title\":\"бѓ‘бѓЈбѓњбѓ™бѓ”бѓ бѓ | SILO\",\"title_ka\":\"...\",\"title_en\":null,\"slug\":\"bunkeri-ji\",\"year\":2023
+          // Structure in escaped Next.js JSON: \"id\":10792,\"title\":\"ბუნკერი | SILO\",\"title_ka\":\"...\",\"title_en\":null,\"slug\":\"bunkeri-ji\",\"year\":2023
           const pattern = /\\"id\\":\d+,\\"title\\":\\"([^"]+?)\\",\\"title_ka\\":\\"([^"]*?)\\"(?:,\\"title_en\\":(?:null|\\"[^"]*?\\"))?,\\"slug\\":\\"([^"]+?)\\",\\"year\\":(\d+|null)/g;
           const matches = [...allData.matchAll(pattern)];
 
@@ -904,14 +974,16 @@ export default {
     async function getAdjaranettoMovieUrl(slug) {
       try {
         const url = "https://adjaranetto.com/" + slug + ".html";
-        const r = await fetch(url, { headers: htmlHeaders() });
+        const r = await fetchProvider(url, { headers: htmlHeaders() }, { timeoutMs: 10_000 });
         const html = await r.text();
 
         const nextFData = [...html.matchAll(/<script>self\.__next_f.*?<\/script>/g)].join('');
         const matches = [...nextFData.matchAll(/\\"url\\":\\"?([^"\\]+)\\"?/g)];
         const validUrls = matches.map(m => m[1]).filter(u => /(sibnet\.ru|incvideo|secvideo|csst\.online|vkvideo|myvi|mykadri\.vip|embed|\.mp4|\.m3u8)/i.test(u));
         if (validUrls.length) return validUrls[0];
-      } catch (e) { }
+      } catch (error) {
+        console.error(JSON.stringify({ message: 'provider_detail_failed', provider: 'adjaranetto.com', error: error instanceof Error ? error.message : String(error) }));
+      }
       return null;
     }
 
@@ -919,9 +991,9 @@ export default {
     async function resolvePackedPlayer(url) {
       try {
         const domain = new URL(url).hostname; // e.g. adjaraneti.xyz or mykadri.vip
-        const res = await fetch(url, {
+        const res = await fetchProvider(url, {
           headers: { ...htmlHeaders(), 'Referer': 'https://adjaranetto.com/' }
-        });
+        }, { timeoutMs: 10_000 });
         const html = await res.text();
         const idx = html.indexOf('eval(function(p,a,c,k,e,d)');
         if (idx < 0) return null;
@@ -952,7 +1024,8 @@ export default {
                 }
             }
         } else {
-            decoded = eval(packedExpr); // fallback just in case
+            console.error(JSON.stringify({ message: 'packed_player_format_changed', provider: domain }));
+            return null;
         }
         // Extract stream URLs from decoded JS
         const hls4m = decoded.match(/"hls4"\s*:\s*"(\/[^"]+\.m3u8[^"]*)"/); // relative path
@@ -963,20 +1036,22 @@ export default {
         if (hls2m) return hls2m[1];
         if (mp4m) return mp4m[1];
         if (hls3m) return hls3m[1];
-      } catch (e) { }
+      } catch (error) {
+        console.error(JSON.stringify({ message: 'packed_player_failed', error: error instanceof Error ? error.message : String(error) }));
+      }
       return null;
     }
 
     async function getAdjaranettoSeriesEpisodes(slug) {
       try {
         const url = "https://adjaranetto.com/" + slug + ".html";
-        const r = await fetch(url, { headers: htmlHeaders() });
+        const r = await fetchProvider(url, { headers: htmlHeaders() }, { timeoutMs: 10_000 });
         const html = await r.text();
         const scripts = [...html.matchAll(/<script>self\.__next_f.*?<\/script>/gs)];
         const allData = scripts.map(s => s[0]).join('');
 
         // Real structure in Next.js RSC (triple-escaped):
-        // \"season_id\":69577,\"episode_number\":1,\"title\":\"бѓЎбѓ”бѓ бѓбѓђ 1\",\"url\":\"https://video.sibnet.ru/...\"
+        // \"season_id\":69577,\"episode_number\":1,\"title\":\"სერია 1\",\"url\":\"https://video.sibnet.ru/...\"
 
         // Extract season mappings
         const seasonMatches = [...allData.matchAll(/\\"id\\":(\d+),\\"movie_id\\":\d+,\\"season_number\\":(\d+)/g)];
@@ -1030,7 +1105,7 @@ export default {
         const u = abs(baseUrl, m[1]);
         try {
           if (/\.html$/i.test(new URL(u).pathname)) out.add(u);
-        } catch { }
+        } catch { /* discard malformed candidate URLs */ }
       }
       if (!out.size) {
         const reAll =
@@ -1046,7 +1121,7 @@ export default {
               )
             )
               out.add(u);
-          } catch { }
+          } catch { /* discard malformed candidate URLs */ }
         }
       }
       return Array.from(out);
@@ -1058,7 +1133,7 @@ export default {
         form.set("do", "search");
         form.set("subaction", "search");
         form.set("story", q);
-        const r = await fetch("https://www.imovs.ge/index.php?do=search", {
+        const r = await fetchProvider("https://www.imovs.ge/index.php?do=search", {
           method: "POST",
           body: form,
           redirect: "follow",
@@ -1071,11 +1146,13 @@ export default {
             "User-Agent": htmlHeaders().get("User-Agent"),
           },
           cf: { cacheTtl: 0, cacheEverything: false },
-        });
+        }, { timeoutMs: 10_000 });
         const t = await r.text();
         if (t && !looksLikeCF(t))
           return { base: "https://www.imovs.ge", html: t };
-      } catch { }
+      } catch (error) {
+        console.error(JSON.stringify({ message: 'provider_search_failed', provider: 'imovs.ge', stage: 'post', error: error instanceof Error ? error.message : String(error) }));
+      }
       const BASES = ["https://www.imovs.ge", "https://imovs.ge"];
       const paths = [
         (x) => `/?do=search&subaction=search&story=${encodeURIComponent(x)}`,
@@ -1126,20 +1203,21 @@ export default {
       return (list || []).map((x) => {
         if (x.isIframe) return x; // DON'T WRAP IFRAMES!
         const f = x.file;
+        const streamReferer = x.referer || referer || "https://csst.online/embed/";
         if (/\.m3u8(?:\?|$)/i.test(f)) {
           return {
             ...x,
             file: `${SELF}/hls?u=${encodeURIComponent(f)}&ref=${encodeURIComponent(
-              referer || "https://csst.online/embed/"
+              streamReferer
             )}`,
             label: x.label || "HLS",
           };
         }
-        // бѓ§бѓ•бѓ”бѓљбѓђ бѓ“бѓђбѓњбѓђбѓ бѓ©бѓ”бѓњбѓ бѓ•бѓбѓ“бѓ”бѓќ URL-бѓЎ бѓ•бѓђбѓўбѓђбѓ бѓ”бѓ‘бѓ— /play-бѓ–бѓ” (бѓ—бѓЈбѓњбѓ“бѓђбѓЄ бѓ’бѓђбѓ¤бѓђбѓ бѓ—бѓќбѓ”бѓ‘бѓђ бѓђбѓ  бѓ”бѓ¬бѓ”бѓ бѓќбѓЎ)
+        // ყველა დანარჩენი ვიდეო URL გადის /play-ზე (თუნდაც გაფართოება არ ეწეროს).
         return {
           ...x,
           file: `${SELF}/play?u=${encodeURIComponent(f)}&ref=${encodeURIComponent(
-            referer || "https://csst.online/embed/"
+            streamReferer
           )}`,
           label: x.label || "auto",
         };
@@ -1149,16 +1227,6 @@ export default {
     /* ================= ROUTES ================= */
 
     // MOVIE
-
-    // MOVIE
-      if (url.pathname === '/test-sources') {
-        const q = url.searchParams.get('q') || 'spider-man';
-        const geo = await searchGeosaitebi(q, "movie").catch(e => ({error: e.message}));
-        const ufaso = await searchUfasofilmebi(q, "movie").catch(e => ({error: e.message}));
-        const adja = await searchAdjaranetto(q).catch(e => ({error: e.message}));
-        return json({ q, geo, ufaso, adja });
-      }
-
     if (url.pathname === "/imovs") {
       const q = (url.searchParams.get("q") || "").trim();
       const dbg = url.searchParams.get("debug") === "1";
@@ -1180,7 +1248,7 @@ export default {
         .replace(/\s*season/gi, '')
         .trim();
 
-      const qEng = extractEnglishTitle(cleanQ);
+      const qEng = (url.searchParams.get('eng') || '').trim() || extractEnglishTitle(cleanQ);
       const qGeo = extractGeorgianTitle(cleanQ);
 
       const customTitleMap = {
@@ -1245,68 +1313,90 @@ export default {
       const season = url.searchParams.get("season") ? parseInt(url.searchParams.get("season")) : undefined;
       const episode = url.searchParams.get("episode") ? parseInt(url.searchParams.get("episode")) : undefined;
 
-      // 1.5 Try Croconet.cam
-      if (!source || source === 'Croconet.cam') {
-        try {
-          const crocoStreams = await searchCroconet(cleanQ, "series", season, episode, eng);
-          if (crocoStreams && crocoStreams.length) {
-             episodes.push({
-               season: season || 1,
-               episode: episode || 1,
-               playerIndex: 1,
-               title: `S${season || 1} / ეპიზოდი ${episode || 1}`,
-               pageUrl: crocoStreams[0].file,
-               candidate: crocoStreams[0].file,
-               streams: crocoStreams,
-               source: "Croconet.cam"
-             });
-          }
-        } catch (err) {}
-      }
-
       // 2. Try ufasofilmebi.ge
       if (!source || source === 'ufasofilmebi.ge') {
         try {
-          const ufasoMovies = await searchUfasofilmebi(cleanQ, "movie", eng);
+          const ufasoMovies = await searchUfasofilmebi(cleanQ, "movie", qEng);
           if (ufasoMovies && ufasoMovies.length) {
              allPlayers.push({ streams: ufasoMovies, candidate: ufasoMovies[0].file, source: "ufasofilmebi.ge" });
-          }
-        } catch (e) {}
+           }
+        } catch (error) {
+          console.error(JSON.stringify({ message: 'provider_failed', provider: 'ufasofilmebi.ge', error: error instanceof Error ? error.message : String(error) }));
+        }
       }
 
       // 3. Try chemikino.com
       if (!source || source === 'chemikino.com') {
         try {
-          const chemiStreams = await searchChemikino(cleanQ, "movie", eng);
+          const chemiStreams = await searchChemikino(cleanQ, "movie", qEng);
           if (chemiStreams && chemiStreams.length) {
              allPlayers.push({ streams: chemiStreams, candidate: chemiStreams[0].file, source: "chemikino.com" });
           }
-        } catch (e) {}
+        } catch (error) {
+          console.error(JSON.stringify({ message: 'provider_failed', provider: 'chemikino.com', error: error instanceof Error ? error.message : String(error) }));
+        }
       }
 
       // 3.5 Try Croconet.cam
       if (!source || source === 'Croconet.cam') {
         try {
-          const crocoStreams = await searchCroconet(cleanQ, "movie", undefined, undefined, eng);
+          const crocoStreams = await searchCroconet(cleanQ, "movie", undefined, undefined, qEng);
           if (crocoStreams && crocoStreams.length) {
              const wrappedCroco = wrapStreams(crocoStreams, "https://croconet.cam/");
              allPlayers.push({ streams: wrappedCroco, candidate: wrappedCroco[0].file, source: "Croconet.cam" });
           }
-        } catch (e) {}
+        } catch (error) {
+          console.error(JSON.stringify({ message: 'provider_failed', provider: 'Croconet.cam', error: error instanceof Error ? error.message : String(error) }));
+        }
       }
 
-      // 3.5 Try Croconet.cam
-      if (!source || source === 'Croconet.cam') {
+      // 4. Generic providers imported from the JARVIS reference implementation.
+      const genericProviderIds = ['asia.com.ge', 'geofilms.net', 'kinolab.cc', 'geosaitebi.tv'];
+      for (const providerId of genericProviderIds) {
+        if (source && source !== providerId) continue;
         try {
-          const crocoStreams = await searchCroconet(cleanQ, "movie");
-          if (crocoStreams && crocoStreams.length) {
-             const wrappedCroco = wrapStreams(crocoStreams, "https://croconet.cam/");
-             allPlayers.push({ streams: wrappedCroco, candidate: wrappedCroco[0].file, source: "Croconet.cam" });
+          const streams = await searchExternalProvider(providerId, { query: cleanQ, engQuery: qEng, geoQuery: qGeo, type: 'movie' });
+          if (streams.length) {
+            const wrapped = wrapStreams(streams, `https://${providerId}/`);
+            allPlayers.push({ streams: wrapped, candidate: wrapped[0].file, source: providerId });
           }
-        } catch (e) {}
+        } catch (error) {
+          console.error(JSON.stringify({ message: 'provider_failed', provider: providerId, error: error instanceof Error ? error.message : String(error) }));
+        }
       }
 
-      // 4. Try Imovs.ge
+      // 5. Try Imovs.ge
+      if ((!source || source === 'imovs.ge') && !allPlayers.length) {
+        try {
+          const { base, html } = await strongSearch(q);
+          if (html) {
+            const best = await chooseBestDetail(pickMovieLinksFromSearch(html, base), q);
+            if (best.url && best.page) {
+              const candidates = [];
+              const attrRe = /(?:data-url|data-src|data-href|data-player|href|src)=["']([^"']+)["']/gi;
+              let match;
+              while ((match = attrRe.exec(best.page)) !== null) {
+                let candidate = match[1];
+                if (/^[A-Za-z0-9+/=]{20,}$/.test(candidate)) {
+                  try { candidate = atob(candidate); } catch { /* not base64 */ }
+                }
+                candidate = abs(best.url, candidate);
+                if (/(?:secvideo|sibnet|csst\.online\/embed|vkvideo|ok\.ru\/videoembed|mail\.ru|stormo|myvi|\.m3u8|\.mp4)/i.test(candidate)) candidates.push(candidate);
+              }
+              const streams = [];
+              for (const candidate of uniq(candidates).slice(0, 8)) {
+                const resolved = await resolveCandidate(candidate, best.url);
+                streams.push(...(resolved.data || []).map((item) => ({ ...item, referer: candidate })));
+              }
+              const normalized = wrapStreams(normalizeAndSort(streams), best.url);
+              if (normalized.length) allPlayers.push({ streams: normalized, candidate: best.url, source: 'imovs.ge' });
+            }
+          }
+        } catch (error) {
+          console.error(JSON.stringify({ message: 'provider_failed', provider: 'imovs.ge', error: error instanceof Error ? error.message : String(error) }));
+        }
+      }
+
       if (allPlayers.length) {
         if (source) {
           const matchedPlayer = allPlayers.find(p => p.source === source);
@@ -1339,14 +1429,19 @@ export default {
         const u = "https://animeb.ge/?do=search&subaction=search&story=" + encodeURIComponent(q);
         const t = await getText(u, "https://animeb.ge/");
 
-        const linkRe = /<a[^>]+href=["'](https?:\/\/animeb\.ge\/anime\/[^"']+\.html)["'][^>]*>/gi;
+        const linkRe = /<a[^>]+href=["'](https?:\/\/animeb\.ge\/anime\/[^"']+\.html)["'][^>]*>([\s\S]*?)<\/a>/gi;
         const links = [];
         let m;
-        while ((m = linkRe.exec(t)) !== null) { if (!links.includes(m[1])) links.push(m[1]); }
+        while ((m = linkRe.exec(t)) !== null) {
+          const title = `${m[2].replace(/<[^>]+>/g, ' ')} ${decodeURIComponent(m[1].split('/').pop() || '').replace(/[-_]/g, ' ')}`;
+          if (!links.some(item => item.url === m[1])) links.push({ url: m[1], title });
+        }
 
         if (!links.length) return json({ ok: false, error: "not_found" });
 
-        const bestUrl = links[0];
+        const best = links.map(item => ({ ...item, score: titleScore(q, item.title) })).sort((a, b) => b.score - a.score)[0];
+        if (!best || best.score < 0.25) return json({ ok: false, error: 'not_found', provider: 'animeb.ge' });
+        const bestUrl = best.url;
         const detailHtml = await getText(bestUrl, "https://animeb.ge/");
 
         const episodes = [];
@@ -1357,7 +1452,7 @@ export default {
           hasSeasons = true;
           const seasonNum = parseInt(m[1]);
           const block = m[2];
-          const epRe2 = /\{"title"\s*:\s*'([^']+)'\s*,\s*"url"\s*:\s*'([^']+)'\s*\}/g;
+          const epRe2 = /\{["']title["']\s*:\s*["']([^"']+)["']\s*,\s*["']url["']\s*:\s*["']([^"']+)["']\s*\}/g;
           let m2;
           let epIndex = 1;
           while ((m2 = epRe2.exec(block)) !== null) {
@@ -1383,7 +1478,7 @@ export default {
         }
 
         if (!hasSeasons) {
-          const epRe = /\{"title"\s*:\s*'([^']+)'\s*,\s*"url"\s*:\s*'([^']+)'\s*\}/g;
+          const epRe = /\{["']title["']\s*:\s*["']([^"']+)["']\s*,\s*["']url["']\s*:\s*["']([^"']+)["']\s*\}/g;
           let epIndex = 1;
           while ((m = epRe.exec(detailHtml)) !== null) {
             let epUrl = m[2];
@@ -1404,7 +1499,9 @@ export default {
           }
         }
 
-        return json({ ok: true, episodes });
+        return episodes.length
+          ? json({ ok: true, episodes, provider: 'animeb.ge' })
+          : json({ ok: false, error: 'episodes_not_found', provider: 'animeb.ge' });
       } catch (e) {
         return json({ ok: false, error: e.toString() });
       }
@@ -1414,42 +1511,23 @@ export default {
       const pageUrl = url.searchParams.get("url");
       if (!pageUrl) return json({ ok: false, error: "missing url" });
       try {
-        const episodes = [];
+        const parsed = new URL(pageUrl);
+        if (parsed.protocol !== 'https:' || !/(^|\.)animetv\.ge$/i.test(parsed.hostname)) return json({ ok: false, error: 'invalid_url' }, 400);
+      } catch {
+        return json({ ok: false, error: 'invalid_url' }, 400);
+      }
+      try {
         const detailHtml = await getText(pageUrl, "https://animetv.ge/");
-        const mPlayers = detailHtml.match(/const\s+allPlayers\s*=\s*(\{[\s\S]*?\});/);
-        if (mPlayers) {
-          const playersStr = mPlayers[1];
-          const pArrays = [...playersStr.matchAll(/(\w+)\s*:\s*\[([\s\S]*?)\]/g)];
-          let maxEpisodes = 0;
-          const playerMap = [];
-          for (const p of pArrays) {
-            const urls = [...p[2].matchAll(/['"](https?:\/\/[^'"]+)['"]/g)].map(x => x[1]);
-            playerMap.push({ name: p[1], urls });
-            if (urls.length > maxEpisodes) maxEpisodes = urls.length;
-          }
-          let seasonNum = 1;
-          const sMatch = pageUrl.match(/season-(\d+)/i) || detailHtml.match(/бѓЎбѓ”бѓ–бѓќбѓњбѓ\s*(\d+)/i);
-          if (sMatch) seasonNum = parseInt(sMatch[1], 10);
-          for (let epIndex = 1; epIndex <= maxEpisodes; epIndex++) {
-            const streams = [];
-            let pIdx = 1;
-            for (const pm of playerMap) {
-              const epUrl = pm.urls[epIndex - 1];
-              if (epUrl) {
-                streams.push({ file: `${SELF}/play?u=${encodeURIComponent(epUrl)}&ref=${encodeURIComponent(pageUrl)}`, label: "F" + pIdx, rawUrl: epUrl, isIframe: true });
-              }
-              pIdx++;
-            }
-            if (streams.length > 0) episodes.push({ season: seasonNum, episode: epIndex, title: "S" + seasonNum + " / E" + epIndex, streams, playerIndex: 1, source: "animetv.ge", candidate: streams[0].rawUrl, pageUrl });
-          }
-        }
+        const episodes = buildAnimeTvEpisodes(detailHtml, pageUrl);
         let overview = '';
         const descMatch = detailHtml.match(/<div class="custom-description">([\s\S]*?)<\/div>/);
         if (descMatch) {
             overview = descMatch[1].replace(/<[^>]+>/g, '').trim();
         }
 
-        return json({ ok: true, episodes, overview });
+        return episodes.length
+          ? json({ ok: true, episodes, overview, provider: 'animetv.ge' })
+          : json({ ok: false, error: 'episodes_not_found', overview, provider: 'animetv.ge' });
       } catch (e) {
         return json({ ok: false, error: String(e) });
       }
@@ -1464,69 +1542,23 @@ export default {
         const u = "https://animetv.ge/index.php?do=search&subaction=search&story=" + encodeURIComponent(q);
         const t = await getText(u, "https://animetv.ge/");
 
-        const linkRe = /<a[^>]+href=["'](https?:\/\/animetv\.ge\/[^"']+\.html)["'][^>]*>/gi;
+        const linkRe = /<a[^>]+href=["'](https?:\/\/animetv\.ge\/[^"']+\.html)["'][^>]*>([\s\S]*?)<\/a>/gi;
         const links = [];
         let m;
-        while ((m = linkRe.exec(t)) !== null) { if (!links.includes(m[1])) links.push(m[1]); }
+        while ((m = linkRe.exec(t)) !== null) {
+          const title = `${m[2].replace(/<[^>]+>/g, ' ')} ${decodeURIComponent(m[1].split('/').pop() || '').replace(/[-_]/g, ' ')}`;
+          if (!links.some(item => item.url === m[1])) links.push({ url: m[1], title });
+        }
 
         if (!links.length) return json({ ok: false, error: "not_found" });
 
-        const episodes = [];
-        
-        // Only take the VERY FIRST search result to avoid combining different seasons or animes
-        for (const bestUrl of links.slice(0, 1)) {
-          const detailHtml = await getText(bestUrl, "https://animetv.ge/");
-          
-          // Extract allPlayers object
-          const mPlayers = detailHtml.match(/const\s+allPlayers\s*=\s*(\{[\s\S]*?\});/);
-          if (mPlayers) {
-            const playersStr = mPlayers[1];
-            const pArrays = [...playersStr.matchAll(/(\w+)\s*:\s*\[([\s\S]*?)\]/g)];
-            
-            let maxEpisodes = 0;
-            const playerMap = [];
-            
-            for (const p of pArrays) {
-              const pName = p[1];
-              const urlsStr = p[2];
-              const urls = [...urlsStr.matchAll(/['"](https?:\/\/[^'"]+)['"]/g)].map(x => x[1]);
-              playerMap.push({ name: pName, urls: urls });
-              if (urls.length > maxEpisodes) maxEpisodes = urls.length;
-            }
-            
-            // Season from URL or title
-            let seasonNum = 1;
-            const sMatch = bestUrl.match(/season-(\d+)/i) || detailHtml.match(/бѓЎбѓ”бѓ–бѓќбѓњбѓ\s*(\d+)/i);
-            if (sMatch) seasonNum = parseInt(sMatch[1], 10);
-
-            for (let epIndex = 1; epIndex <= maxEpisodes; epIndex++) {
-              const streams = [];
-              let pIdx = 1;
-              for (const pm of playerMap) {
-                const epUrl = pm.urls[epIndex - 1];
-                if (epUrl) {
-                  const resolvedUrl = `${SELF}/play?u=${encodeURIComponent(epUrl)}&ref=${encodeURIComponent(bestUrl)}`;
-                  streams.push({ file: resolvedUrl, label: "F" + pIdx, rawUrl: epUrl, isIframe: true });
-                }
-                pIdx++;
-              }
-              if (streams.length > 0) {
-                episodes.push({
-                  season: seasonNum,
-                  episode: epIndex,
-                  title: "S" + seasonNum + " / E" + epIndex,
-                  streams: streams,
-                  playerIndex: 1,
-                  source: "animetv.ge",
-                  candidate: streams[0].rawUrl,
-                  pageUrl: bestUrl
-                });
-              }
-            }
-          }
-        }
-
-        return json({ ok: true, episodes });
+        const best = links.map(item => ({ ...item, score: titleScore(q, item.title) })).sort((a, b) => b.score - a.score)[0];
+        if (!best || best.score < 0.25) return json({ ok: false, error: 'not_found', provider: 'animetv.ge' });
+        const detailHtml = await getText(best.url, "https://animetv.ge/");
+        const episodes = buildAnimeTvEpisodes(detailHtml, best.url);
+        return episodes.length
+          ? json({ ok: true, episodes, provider: 'animetv.ge' })
+          : json({ ok: false, error: 'episodes_not_found', provider: 'animetv.ge' });
       } catch (e) {
         return json({ ok: false, error: String(e) });
       }
@@ -1550,7 +1582,7 @@ export default {
         .replace(/\s*season/gi, '')
         .trim();
 
-      const qEng = extractEnglishTitle(cleanQ);
+      const qEng = (url.searchParams.get('eng') || '').trim() || extractEnglishTitle(cleanQ);
       const qGeo = extractGeorgianTitle(cleanQ);
 
       const customTitleMap = {
@@ -1631,7 +1663,7 @@ export default {
       // 1.5 Try Croconet.cam
       if (!source || source === 'Croconet.cam') {
         try {
-          const crocoStreams = await searchCroconet(cleanQ, "series", season, episode);
+          const crocoStreams = await searchCroconet(cleanQ, "series", season, episode, qEng);
           if (crocoStreams && crocoStreams.length) {
              episodes.push({
                season: season || 1,
@@ -1644,13 +1676,15 @@ export default {
                source: "Croconet.cam"
              });
           }
-        } catch (err) {}
+        } catch (error) {
+          console.error(JSON.stringify({ message: 'provider_failed', provider: 'Croconet.cam', error: error instanceof Error ? error.message : String(error) }));
+        }
       }
 
       // 2. Try ufasofilmebi.ge
       if (!source || source === 'ufasofilmebi.ge') {
         try {
-          const ufasoSeries = await searchUfasofilmebi(cleanQ, "series");
+          const ufasoSeries = await searchUfasofilmebi(cleanQ, "series", qEng);
           if (ufasoSeries && ufasoSeries.length) {
             for (const s of ufasoSeries) {
               for (const e of s.episodes) {
@@ -1672,30 +1706,64 @@ export default {
               }
             }
           }
-        } catch (err) {}
+        } catch (error) {
+          console.error(JSON.stringify({ message: 'provider_failed', provider: 'ufasofilmebi.ge', error: error instanceof Error ? error.message : String(error) }));
+        }
       }
 
       // 3. Try chemikino.com
       if (!source || source === 'chemikino.com') {
         try {
-          const chemiSeries = await searchChemikino(cleanQ, "series");
+          const chemiSeries = await searchChemikino(cleanQ, "series", qEng);
           if (chemiSeries && chemiSeries.length) {
-            // (chemikino series resolver is same, but for simplicity if we found streams we group them)
-            // Note: searchChemikino returns array of streams. We match all of them as episode 1 or search page
-            // Chemikino is normally movie only, but if they want it in series list, we allow it.
+            episodes.push({
+              season: season || 1,
+              episode: episode || 1,
+              playerIndex: 1,
+              title: `S${season || 1} / ეპიზოდი ${episode || 1}`,
+              pageUrl: chemiSeries[0].file,
+              candidate: chemiSeries[0].file,
+              streams: chemiSeries,
+              source: 'chemikino.com',
+            });
           }
-        } catch (err) {}
+        } catch (error) {
+          console.error(JSON.stringify({ message: 'provider_failed', provider: 'chemikino.com', error: error instanceof Error ? error.message : String(error) }));
+        }
       }
-      // 2. Try Imovs if Adjaranetto failed
-      if (!episodes.length) {
+
+      const seriesGenericProviderIds = ['asia.com.ge', 'geofilms.net', 'kinolab.cc', 'geosaitebi.tv'];
+      for (const providerId of seriesGenericProviderIds) {
+        if (source && source !== providerId) continue;
+        try {
+          const streams = await searchExternalProvider(providerId, { query: cleanQ, engQuery: qEng, geoQuery: qGeo, type: 'tv', season, episode });
+          if (streams.length) {
+            episodes.push({
+              season: season || 1,
+              episode: episode || 1,
+              playerIndex: 1,
+              title: `S${season || 1} / ეპიზოდი ${episode || 1}`,
+              pageUrl: streams[0].file,
+              candidate: streams[0].file,
+              streams: wrapStreams(streams, `https://${providerId}/`),
+              source: providerId,
+            });
+          }
+        } catch (error) {
+          console.error(JSON.stringify({ message: 'provider_failed', provider: providerId, error: error instanceof Error ? error.message : String(error) }));
+        }
+      }
+
+      // Try Imovs if the requested provider is Imovs or no provider was specified.
+      if ((!source || source === 'imovs.ge') && !episodes.length) {
         const { base, html } = await strongSearch(query);
         if (html) {
           const allCandidates = pickMovieLinksFromSearch(html, base);
           const candidates = allCandidates.slice(0, 6);
           // (Original Imovs series code)
           const hostRE = new RegExp("(" + "https?://secvideo\\d*\\.online/embed/\\d+/?" + "|" + "https?://video\\.sibnet\\.ru/shell\\.php\\?videoid=\\d+" + "|" + "https?://csst\\.online/embed/\\d+/?" + "|" + "https?://vkvideo\\.ru/video_ext\\.php\\?[^\"\\'\\s]+" + "|" + "https?://ok\\.ru/videoembed/\\d+" + "|" + "https?://videoapi\\.my\\.mail\\.ru/videos/embed/[^\"\\'\\s]+" + "|" + "https?://my\\.mail\\.ru/.+/video/embed/[^\"\\'\\s]+" + "|" + "https?://stormo\\.online/embed/\\d+/?" + "|" + "https?://myvi\\.ru/player/embed/html/[^\"\\'\\s]+" + ")", "ig");
-          function seasonMarksFrom(page) { const marks = []; let mh; const reSeasonHdr = /(бѓЎбѓ”бѓ–бѓќбѓњ(?:бѓ)?|РЎРµР·РѕРЅ|Season)\s*([0-9]{1,2})/gi; while ((mh = reSeasonHdr.exec(page)) !== null) marks.push({ season: parseInt(mh[2], 10), index: mh.index }); marks.sort((a, b) => a.index - b.index); return marks; }
-          function episodeMarksFrom(page) { const marks = []; let eh; const reEpHdr = /(бѓЎбѓ”бѓ бѓбѓђ|РЎРµСЂРёСЏ|Episode)\s*0?(\d{1,3})/gi; while ((eh = reEpHdr.exec(page)) !== null) marks.push({ num: parseInt(eh[2], 10), index: eh.index }); marks.sort((a, b) => a.index - b.index); return marks; }
+          function seasonMarksFrom(page) { const marks = []; let mh; const reSeasonHdr = /(სეზონ(?:ი)?|Сезон|Season)\s*([0-9]{1,2})/gi; while ((mh = reSeasonHdr.exec(page)) !== null) marks.push({ season: parseInt(mh[2], 10), index: mh.index }); marks.sort((a, b) => a.index - b.index); return marks; }
+          function episodeMarksFrom(page) { const marks = []; let eh; const reEpHdr = /(სერია|Серия|Episode)\s*0?(\d{1,3})/gi; while ((eh = reEpHdr.exec(page)) !== null) marks.push({ num: parseInt(eh[2], 10), index: eh.index }); marks.sort((a, b) => a.index - b.index); return marks; }
           function seasonForIndex(idx, marks) { let s = 1; for (const mk of marks) { if (idx >= mk.index) s = mk.season; else break; } return s; }
           function episodeForIndex(idx, marks) { let e = 1; for (const mk of marks) { if (idx >= mk.index) e = mk.num; else break; } return e; }
 
@@ -1713,7 +1781,7 @@ export default {
               let u = atr[2];
               const http = u.match(/https?:\/\/[^"' \t\r\n]+/i) || u.match(/\/\/[^"' \t\r\n]+/i);
               if (http) u = http[0].replace(/^\/\//, "https://");
-              if (/^[A-Za-z0-9+/=]{20,}$/.test(u)) { try { const dec = atob(u); const m = dec.match(/https?:\/\/[^"' \t\r\n]+/i); u = m ? m[0] : dec; } catch { } }
+              if (/^[A-Za-z0-9+/=]{20,}$/.test(u)) { try { const dec = atob(u); const m = dec.match(/https?:\/\/[^"' \t\r\n]+/i); u = m ? m[0] : dec; } catch { /* ignore malformed encoded candidate */ } }
               u = abs(pageUrl, u);
               if (/(secvideo|sibnet|csst\.online\/embed|vkvideo\.ru\/video_ext|ok\.ru\/videoembed|videoapi\.my\.mail\.ru\/videos\/embed|my\.mail\.ru\/.+\/video\/embed|stormo\.online\/embed|myvi\.ru\/player\/embed\/html)/i.test(u)) ordered.push({ url: u, index: atr.index });
             }
@@ -1754,7 +1822,7 @@ export default {
                 season: entry.season,
                 episode: entry.episode,
                 playerIndex: playerIndex,
-                title: playerIndex === 1 ? `S${entry.season} / РЎРµСЂРёСЏ ${entry.episode}` : `бѓ¤бѓљбѓ”бѓбѓ”бѓ бѓ ${playerIndex}`,
+                title: playerIndex === 1 ? `S${entry.season} / სერია ${entry.episode}` : `ფლეიერი ${playerIndex}`,
                 pageUrl: bucket.source,
                 candidate: bucket.source,
                 streams: wrapped,
@@ -1782,17 +1850,23 @@ export default {
     /* ================= HLS proxy ================= */
     if (url.pathname === "/hls") {
       let u = url.searchParams.get("u");
-      const ref = url.searchParams.get("ref") || "https://csst.online/embed/";
+      let ref = url.searchParams.get("ref") || "https://csst.online/embed/";
       if (!u) return json({ ok: false, error: "missing u" });
+      if (!isAllowedProxyUrl(u)) return json({ ok: false, error: 'proxy_target_denied', message: 'Media მისამართი დაუშვებელია.' }, 403);
+      if (!isAllowedProxyUrl(ref)) ref = 'https://csst.online/embed/';
 
       // JIT Resolution for packed players
       if (/(?:adjaraneti\.xyz|mykadri\.vip)\/v\//i.test(u)) {
         const resolved = await resolvePackedPlayer(u);
         if (resolved) u = resolved;
       }
+      if (!isAllowedProxyUrl(u)) return json({ ok: false, error: 'proxy_target_denied', message: 'Resolved media მისამართი დაუშვებელია.' }, 403);
 
       const r = await getResp(u, ref, undefined, "hls");
+      const length = Number(r.headers.get('Content-Length') || 0);
+      if (length > 2_000_000) return json({ ok: false, error: 'playlist_too_large' }, 413);
       const text = await r.text();
+      if (text.length > 2_000_000) return json({ ok: false, error: 'playlist_too_large' }, 413);
       const base = new URL(u);
 
       function rewrite(line) {
@@ -1830,35 +1904,43 @@ export default {
       }
 
       const lines = text.split("\n").map(rewrite).join("\n");
+      const responseHeaders = {
+        "Content-Type": "application/vnd.apple.mpegurl; charset=utf-8",
+        "Cache-Control": "no-cache",
+        Vary: 'Origin',
+      };
+      if (allowedCorsOrigin) responseHeaders["Access-Control-Allow-Origin"] = allowedCorsOrigin;
       return new Response(lines, {
         status: 200,
-        headers: {
-          "Content-Type": "application/vnd.apple.mpegurl; charset=utf-8",
-          "Access-Control-Allow-Origin": "*",
-          "Cache-Control": "no-cache",
-        },
+        headers: responseHeaders,
       });
     }
 
     if (url.pathname === "/hlsseg") {
       const u = url.searchParams.get("u");
-      const ref = url.searchParams.get("ref") || "https://csst.online/embed/";
+      let ref = url.searchParams.get("ref") || "https://csst.online/embed/";
       if (!u) return json({ ok: false, error: "missing u" });
+      if (!isAllowedProxyUrl(u)) return json({ ok: false, error: 'proxy_target_denied' }, 403);
+      if (!isAllowedProxyUrl(ref)) ref = 'https://csst.online/embed/';
       const range = req.headers.get("Range");
       const upstream = await getResp(u, ref, range, "hls");
       const h = new Headers(upstream.headers);
-      h.set("Access-Control-Allow-Origin", "*");
+      if (allowedCorsOrigin) h.set("Access-Control-Allow-Origin", allowedCorsOrigin);
+      h.set('Vary', 'Origin');
       h.set("Cache-Control", "no-cache");
       return new Response(upstream.body, { status: upstream.status, headers: h });
     }
 
     if (url.pathname === "/hlskey") {
       const u = url.searchParams.get("u");
-      const ref = url.searchParams.get("ref") || "https://csst.online/embed/";
+      let ref = url.searchParams.get("ref") || "https://csst.online/embed/";
       if (!u) return json({ ok: false, error: "missing u" });
+      if (!isAllowedProxyUrl(u)) return json({ ok: false, error: 'proxy_target_denied' }, 403);
+      if (!isAllowedProxyUrl(ref)) ref = 'https://csst.online/embed/';
       const upstream = await getResp(u, ref, undefined, "hls");
       const h = new Headers(upstream.headers);
-      h.set("Access-Control-Allow-Origin", "*");
+      if (allowedCorsOrigin) h.set("Access-Control-Allow-Origin", allowedCorsOrigin);
+      h.set('Vary', 'Origin');
       h.set("Cache-Control", "no-cache");
       return new Response(upstream.body, { status: upstream.status, headers: h });
     }
@@ -1866,8 +1948,10 @@ export default {
     /* ================= MP4 passthrough ================= */
     if (url.pathname === "/play") {
       const u = url.searchParams.get("u");
-      const ref = url.searchParams.get("ref") || "https://csst.online/embed/";
+      let ref = url.searchParams.get("ref") || "https://csst.online/embed/";
       if (!u) return json({ ok: false, error: "missing u" });
+      if (!isAllowedProxyUrl(u)) return json({ ok: false, error: 'proxy_target_denied' }, 403);
+      if (!isAllowedProxyUrl(ref)) ref = 'https://csst.online/embed/';
 
       const refList = uniq([
         ref,
@@ -1881,7 +1965,8 @@ export default {
       ]);
       const upstream = await tryPlay(u, refList, req.headers.get("Range"));
       const h = new Headers(upstream.headers);
-      h.set("Access-Control-Allow-Origin", "*");
+      if (allowedCorsOrigin) h.set("Access-Control-Allow-Origin", allowedCorsOrigin);
+      h.set('Vary', 'Origin');
       h.set("Cross-Origin-Resource-Policy", "cross-origin");
       if (!h.get("Content-Type")) h.set("Content-Type", "video/mp4");
       return new Response(upstream.body, { status: upstream.status, headers: h });

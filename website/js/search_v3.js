@@ -8,6 +8,20 @@ const SearchView = (() => {
   let searchTimer   = null;
   let allResults    = [];
   let queryText     = '';
+  let requestVersion = 0;
+
+  const transliterationMap = {
+    ა:'a', ბ:'b', გ:'g', დ:'d', ე:'e', ვ:'v', ზ:'z', თ:'t', ი:'i', კ:'k', ლ:'l', მ:'m', ნ:'n', ო:'o', პ:'p', ჟ:'zh', რ:'r', ს:'s', ტ:'t', უ:'u', ფ:'f', ქ:'q', ღ:'gh', ყ:'y', შ:'sh', ჩ:'ch', ც:'ts', ძ:'dz', წ:'ts', ჭ:'ch', ხ:'kh', ჯ:'j', ჰ:'h'
+  };
+
+  function transliterate(value) {
+    return String(value || '').split('').map(char => transliterationMap[char.toLowerCase()] || char).join('');
+  }
+
+  function safeDecode(value) {
+    try { return decodeURIComponent(value); }
+    catch { return value; }
+  }
 
   function isAnime(item) {
     if (item.is_custom) return true;
@@ -18,7 +32,8 @@ const SearchView = (() => {
   }
 
   async function render(params) {
-    const rawParam = params[0] ? decodeURIComponent(params[0]) : '';
+    requestVersion += 1;
+    const rawParam = params[0] ? safeDecode(params[0]) : '';
     let initQuery = rawParam;
     queryText = initQuery;
     currentFilter = 'all';
@@ -81,6 +96,7 @@ const SearchView = (() => {
   }
 
   async function doSearch(query) {
+    const version = ++requestVersion;
     showSkeletons('ძებნა...');
     
     // 1. Search locally in CUSTOM_ANIMES
@@ -102,8 +118,11 @@ const SearchView = (() => {
     }));
 
     // 2. Search in TMDB
-    const data = await API.search(query);
-    let tmdbResults = (data?.results || []).filter(i => i.poster_path && i.media_type !== 'person');
+    const latinQuery = transliterate(query);
+    const queries = [...new Set([query, latinQuery].filter(Boolean))];
+    const responses = await Promise.all(queries.map(value => API.search(value)));
+    if (version !== requestVersion || queryText !== query) return;
+    const tmdbResults = responses.flatMap(data => data?.results || []).filter(i => i.poster_path && i.media_type !== 'person');
     
     // 3. Merge, avoiding duplicates by id
     allResults = [];
@@ -124,8 +143,10 @@ const SearchView = (() => {
   }
 
   async function showTrending() {
+    const version = ++requestVersion;
     showSkeletons('🔥 ტრენდული');
     const data = await API.trending();
+    if (version !== requestVersion || queryText) return;
     allResults = (data?.results || []).filter(i => i.poster_path);
     applyFilterAndRender();
   }

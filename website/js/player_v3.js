@@ -12,9 +12,10 @@ const Player = (() => {
   const LUMEX   = 'https://api.lumex.space/';
   const LSUFFIX = 'clientId=CWfKXLc1ajId&domain=movielab.one&url=movielab.one';
   let currentInfo = null;
+  let providerHealthCache = { expiresAt: 0, byType: new Map() };
 
   async function fetchWithTimeout(resource, options = {}) {
-    const { timeout = 6000 } = options;
+    const { timeout = 12000 } = options;
     const controller = new AbortController();
     const id = setTimeout(() => controller.abort(), timeout);
     try {
@@ -28,6 +29,30 @@ const Player = (() => {
       clearTimeout(id);
       throw error;
     }
+  }
+
+  async function healthyProviderIds(type) {
+    const now = Date.now();
+    if (providerHealthCache.expiresAt > now && providerHealthCache.byType.has(type)) return providerHealthCache.byType.get(type);
+    try {
+      const response = await fetchWithTimeout(`${WORKER}/api/providers/status?type=${encodeURIComponent(type)}`, { timeout: 7000 });
+      const data = await response.json();
+      const ids = new Set((data.providers || []).filter(provider => provider.healthy).map(provider => provider.id));
+      providerHealthCache.byType.set(type, ids);
+      providerHealthCache.expiresAt = now + 5 * 60 * 1000;
+      return ids;
+    } catch {
+      return new Set(['ge.movie']);
+    }
+  }
+
+  async function visibleStreams(streams, type) {
+    const healthy = await healthyProviderIds(type);
+    return streams.filter(stream => !stream.isPlaceholder || healthy.has(stream.label));
+  }
+
+  function htmlEscape(value) {
+    return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
   // ─── HLS.js lazy loader ───
@@ -46,7 +71,7 @@ const Player = (() => {
 
   let _hlsInst = null;
   function destroyHls() {
-    if (_hlsInst) { try { _hlsInst.destroy(); } catch {} _hlsInst = null; }
+    if (_hlsInst) { try { _hlsInst.destroy(); } catch { /* stale HLS instances may already be detached */ } _hlsInst = null; }
   }
 
   // ─── Attach HLS or MP4 ───
@@ -79,7 +104,7 @@ const Player = (() => {
   // ─── Native player HTML ───
   function nativeHtml(streams, selectedIdx = 0) {
     const opts = streams.map((s,i) =>
-      `<option value="${i}" ${i===selectedIdx?'selected':''}>${s.label||'auto'}</option>`).join('');
+      `<option value="${i}" ${i===selectedIdx?'selected':''}>${htmlEscape(s.label||'auto')}</option>`).join('');
     return `
       <div class="native-player-wrap">
         <video id="main-video" class="main-video" controls playsinline preload="metadata"></video>
@@ -93,7 +118,7 @@ const Player = (() => {
   }
 
   async function renderNative(el, streams, onErrorFallback) {
-    const preferredLabel = localStorage.getItem('jarvis_preferred_stream') || 'ge.movie';
+    const preferredLabel = localStorage.getItem('myfilm_preferred_stream') || 'ge.movie';
     let currentIdx = 0;
     
     // Find index of stream matching the preferred label
@@ -133,7 +158,7 @@ const Player = (() => {
             fetchUrl = `${WORKER}/imovs?q=${encodeURIComponent(q)}&eng=${encodeURIComponent(cleanSeriesTitle(currentInfo.origTitle || ''))}&source=${stream.label}`;
           }
           
-          const r = await fetchWithTimeout(fetchUrl, { timeout: 8000 });
+          const r = await fetchWithTimeout(fetchUrl, { timeout: 12000 });
           const d = await r.json();
           
           let foundStream = null;
@@ -161,19 +186,22 @@ const Player = (() => {
             stream.isPlaceholder = false;
             await applyStream(idx);
           } else {
+            const option = sel?.querySelector(`option[value="${idx}"]`);
+            option?.remove();
             iframeWrap.innerHTML = `
               <div class="player-error">
                 <div class="pe-icon">🔍</div>
-                <div class="pe-msg">წყარო ვერ მოიძებნა ამ საიტზე (${stream.label})</div>
+                <div class="pe-msg">წყარო ვერ მოიძებნა ამ საიტზე (${htmlEscape(stream.label)})</div>
                 <div class="pe-sub">სცადე სხვა წყარო ჩამოსაშლელი სიიდან</div>
               </div>`;
+            UI.toast(`${stream.label} ამ ჩანაწერზე მიუწვდომელია`);
           }
         } catch (e) {
           console.error("On-demand search error:", e);
           iframeWrap.innerHTML = `
             <div class="player-error">
               <div class="pe-icon">⚠️</div>
-              <div class="pe-msg">ძიებისას დაფიქსირდა შეცდომა (&nbsp;${stream.label}&nbsp;)</div>
+              <div class="pe-msg">ძიებისას დაფიქსირდა შეცდომა (&nbsp;${htmlEscape(stream.label)}&nbsp;)</div>
               <div class="pe-sub">სცადე მოგვიანებით ან აირჩიე სხვა წყარო</div>
             </div>`;
         }
@@ -233,7 +261,7 @@ const Player = (() => {
           destroyHls();
           iframeWrap.style.display = 'block';
           iframeWrap.innerHTML = `
-            <iframe src="${fallbackIframeUrl}" allowfullscreen
+            <iframe src="${htmlEscape(fallbackIframeUrl)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
               allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
               referrerpolicy="no-referrer"
               style="width:100%;height:100%;border:none;display:block"></iframe>
@@ -258,7 +286,7 @@ const Player = (() => {
         currentIdx = parseInt(sel.value);
         const selectedStream = streams[currentIdx];
         if (selectedStream && selectedStream.label) {
-          localStorage.setItem('jarvis_preferred_stream', selectedStream.label);
+          localStorage.setItem('myfilm_preferred_stream', selectedStream.label);
         }
         const t = video.currentTime;
         applyStream(currentIdx).then(()=>{ if(video.style.display!=='none') video.currentTime = t; });
@@ -280,7 +308,7 @@ const Player = (() => {
     }
     return `
       <div class="iframe-player-wrap">
-        <iframe src="${url}" allowfullscreen
+        <iframe src="${htmlEscape(url)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
           allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
           referrerpolicy="no-referrer"
           style="width:100%;height:100%;border:none;display:block"></iframe>
@@ -308,7 +336,7 @@ const Player = (() => {
     iframe.style.border = 'none';
     iframe.style.display = 'block';
     
-    // Sandboxing disabled to allow third-party players to play correctly
+    if (useSandbox) iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-presentation');
     
     container.appendChild(iframe);
     
@@ -325,7 +353,7 @@ const Player = (() => {
     if (label) {
       const badge = document.createElement('div');
       badge.className = 'iframe-badge';
-      badge.innerHTML = label;
+      badge.textContent = label;
       container.appendChild(badge);
     }
   }
@@ -349,16 +377,8 @@ const Player = (() => {
     const tmdbId = info.tmdbId || '';
     const query = cleanSeriesTitle(info.title || info.name);
     
-    // Dead sources (kinoflix, geosaitebi) deleted. ufasofilmi updated to ufasofilmebi.ge
     const srcs = [
       { name:'🇬🇪 ge.movie', url: type==='tv' ? `https://em.filmx.my/play/?type=serial&id=${tmdbId}&name=serial&season=1&episode=1&lang=ka` : `https://em.filmx.my/play/?type=movie&id=${tmdbId}&lang=ka` },
-      { name:'📺 adjaranetto', url: `https://adjaranetto.com/search?q=${encodeURIComponent(query)}` },
-      { name:'🍿 chemikino', url: `https://chemikino.com/search?q=${encodeURIComponent(query)}` },
-      { name:'🎬 ufasofilmebi.ge', url: `https://ufasofilmebi.ge/?s=${encodeURIComponent(query)}` },
-      { name:'🐊 Croconet.cam', url: `https://croconet.cam/?s=${encodeURIComponent(query)}` },
-      { name:'🔍 imovs.ge', url: `https://imovs.ge/search?q=${encodeURIComponent(query)}` },
-      { name:'▶ VidSrc',     url: type==='tv' ? `https://vidsrc.to/embed/tv/${tmdbId}/1/1` : `https://vidsrc.to/embed/movie/${tmdbId}` },
-      { name:'🌐 MultiEmbed',url: type==='tv' ? `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1&s=1&e=1` : `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1` },
     ];
     const btns = srcs.map(s=>
       `<button class="fallback-source-btn" data-url="${s.url}" data-name="${s.name}">${s.name}</button>`).join('');
@@ -376,22 +396,6 @@ const Player = (() => {
         const url = btn.dataset.url;
         const name = btn.dataset.name;
         
-        // Trigger on-demand search inside the player instead of opening in a new tab!
-        if (name.includes('adjaranetto') || name.includes('chemikino') || name.includes('ufasofilmebi') || name.includes('Croconet') || name.includes('imovs')) {
-           const label = name.includes('adjaranetto') ? 'adjaranetto.com' : (name.includes('chemikino') ? 'chemikino.com' : (name.includes('ufasofilmebi') ? 'ufasofilmebi.ge' : (name.includes('Croconet') ? 'Croconet.cam' : 'imovs.ge')));
-           const placeholderStream = {
-             label: label,
-             file: '',
-             rawUrl: '',
-             isPlaceholder: true,
-             searchType: type === 'tv' ? 'series' : 'movie',
-             season: 1,
-             episode: 1
-           };
-           renderNative(el, [placeholderStream], null);
-           return;
-        }
-
         el.querySelectorAll('.fallback-source-btn').forEach(b=>b.classList.remove('active'));
         btn.classList.add('active');
         el.querySelector('.pf-area')?.remove();
@@ -465,7 +469,7 @@ function hasCJK(str) {
         const d = await r.json();
         if (d?.players?.length) { result = d.players; break; }
         if (d?.data?.length) { result = [{ streams: d.data }]; break; }
-      } catch {}
+      } catch { /* try the next normalized title */ }
     }
     
     if (info.tmdbId) {
@@ -492,7 +496,7 @@ function hasCJK(str) {
           if (d.overview) arr.overview = d.overview;
           return arr;
         }
-      } catch {}
+      } catch { /* custom AnimeTV source is optional */ }
       return null;
     }
 
@@ -505,21 +509,21 @@ function hasCJK(str) {
         const r = await fetchWithTimeout(`${WORKER}/imovs-series?q=${encodeURIComponent(q)}`, { timeout: 6000 });
         const d = await r.json();
         if (d?.episodes?.length) { result = d.episodes; break; }
-      } catch {}
+      } catch { /* try the next title/provider */ }
       
       setStatus(`🔍 ანიმეს ძიება: ${q}...`);
       try {
         const ra = await fetchWithTimeout(`${WORKER}/animeb?q=${encodeURIComponent(q)}`, { timeout: 6000 });
         const da = await ra.json();
         if (da?.episodes?.length) { result = da.episodes; break; }
-      } catch {}
+      } catch { /* AnimeB may not carry this title */ }
 
       setStatus(`🔍 animetv.ge ძიება: ${q}...`);
       try {
         const rat = await fetchWithTimeout(`${WORKER}/animetv?q=${encodeURIComponent(q)}`, { timeout: 6000 });
         const dat = await rat.json();
         if (dat?.episodes?.length) { result = dat.episodes; break; }
-      } catch {}
+      } catch { /* AnimeTV may not carry this title */ }
     }
 
     if (result && info.tmdbId) {
@@ -558,16 +562,18 @@ function hasCJK(str) {
     }
 
     const tmdbId = info.tmdbId;
-    const defaultStreams = [
+    const defaultStreams = await visibleStreams([
       { label: 'ge.movie', file: `https://em.filmx.my/play/?type=movie&id=${tmdbId}&lang=ka`, rawUrl: `https://em.filmx.my/play/?type=movie&id=${tmdbId}&lang=ka`, isIframe: true },
       { label: 'adjaranetto.com', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
       { label: 'chemikino.com', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
       { label: 'ufasofilmebi.ge', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
       { label: 'Croconet.cam', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
       { label: 'imovs.ge', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
-      { label: 'VidSrc', file: `https://vidsrc.to/embed/movie/${tmdbId}`, rawUrl: `https://vidsrc.to/embed/movie/${tmdbId}`, isIframe: true },
-      { label: 'MultiEmbed', file: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`, rawUrl: `https://multiembed.mov/?video_id=${tmdbId}&tmdb=1`, isIframe: true }
-    ];
+      { label: 'asia.com.ge', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
+      { label: 'geofilms.net', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
+      { label: 'kinolab.cc', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
+      { label: 'geosaitebi.tv', file: '', rawUrl: '', isPlaceholder: true, searchType: 'movie' },
+    ], 'movie');
 
     await renderNative(el, defaultStreams, null);
   }
@@ -591,18 +597,15 @@ function hasCJK(str) {
 
     if (info.seasons && onReady) {
       const episodes = [];
+      const healthy = await healthyProviderIds('tv');
+      const providerLabels = ['adjaranetto.com', 'chemikino.com', 'ufasofilmebi.ge', 'Croconet.cam', 'imovs.ge', 'asia.com.ge', 'geofilms.net', 'kinolab.cc', 'geosaitebi.tv']
+        .filter(label => healthy.has(label));
       info.seasons.forEach(s => {
         if (s.season_number === 0) return;
         for (let e = 1; e <= s.episode_count; e++) {
           const streams = [
             { label: 'ge.movie', file: `https://em.filmx.my/play/?type=serial&id=${info.tmdbId}&name=serial&season=${s.season_number}&episode=${e}&lang=ka`, rawUrl: `https://em.filmx.my/play/?type=serial&id=${info.tmdbId}&name=serial&season=${s.season_number}&episode=${e}&lang=ka`, isIframe: true },
-            { label: 'adjaranetto.com', file: '', rawUrl: '', isPlaceholder: true, searchType: 'series', season: s.season_number, episode: e },
-            { label: 'chemikino.com', file: '', rawUrl: '', isPlaceholder: true, searchType: 'series', season: s.season_number, episode: e },
-            { label: 'ufasofilmebi.ge', file: '', rawUrl: '', isPlaceholder: true, searchType: 'series', season: s.season_number, episode: e },
-            { label: 'Croconet.cam', file: '', rawUrl: '', isPlaceholder: true, searchType: 'series', season: s.season_number, episode: e },
-            { label: 'imovs.ge', file: '', rawUrl: '', isPlaceholder: true, searchType: 'series', season: s.season_number, episode: e },
-            { label: 'VidSrc', file: `https://vidsrc.to/embed/tv/${info.tmdbId}/${s.season_number}/${e}`, rawUrl: `https://vidsrc.to/embed/tv/${info.tmdbId}/${s.season_number}/${e}`, isIframe: true },
-            { label: 'MultiEmbed', file: `https://multiembed.mov/?video_id=${info.tmdbId}&tmdb=1&s=${s.season_number}&e=${e}`, rawUrl: `https://multiembed.mov/?video_id=${info.tmdbId}&tmdb=1&s=${s.season_number}&e=${e}`, isIframe: true }
+            ...providerLabels.map(label => ({ label, file: '', rawUrl: '', isPlaceholder: true, searchType: 'series', season: s.season_number, episode: e })),
           ];
           
           episodes.push({

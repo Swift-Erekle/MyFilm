@@ -1,91 +1,85 @@
-const express = require('express');
-const cors = require('cors');
-const fs = require('fs');
-const path = require('path');
+import 'dotenv/config';
+import express from 'express';
+import { readFile } from 'node:fs/promises';
+import { Readable } from 'node:stream';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import worker from './cloudflare.js';
+import { renderRobots, renderSeoIndex, renderSitemap } from './src/seo.js';
 
 const app = express();
-app.use(cors());
+const directory = path.dirname(fileURLToPath(import.meta.url));
+const websiteDirectory = path.join(directory, 'website');
+const indexPath = path.join(websiteDirectory, 'index.html');
+const port = Number(process.env.PORT || 8080);
+const workerEndpoints = new Set([
+  '/imovs', '/imovs-series', '/animeb', '/animes', '/animetv', '/animetv_page',
+  '/play', '/hls', '/hlsseg', '/hlskey', '/api/providers/status',
+]);
 
-const PORT = process.env.PORT || 8080;
+app.disable('x-powered-by');
+app.set('trust proxy', 1);
 
-// Convert cloudflare.js to CommonJS at runtime
-const workerPath = path.join(__dirname, 'cloudflare.js');
-let workerCode = fs.readFileSync(workerPath, 'utf8');
-workerCode = workerCode.replace('export default {', 'module.exports = {');
-const tempWorkerPath = path.join(__dirname, 'temp_worker_node.js');
-fs.writeFileSync(tempWorkerPath, workerCode);
+function requestOrigin(req) {
+  const configured = String(process.env.PUBLIC_ORIGIN || '').replace(/\/$/, '');
+  if (configured) return configured;
+  const protocol = String(req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim();
+  const host = String(req.headers['x-forwarded-host'] || req.headers.host || `localhost:${port}`).split(',')[0].trim();
+  return `${protocol}://${host}`;
+}
 
-const worker = require(tempWorkerPath);
+async function sendWorkerResponse(res, response) {
+  res.status(response.status);
+  response.headers.forEach((value, key) => res.setHeader(key, value));
+  if (!response.body) return res.end();
+  Readable.fromWeb(response.body).pipe(res);
+}
 
-// Serve website static files
-app.use(express.static(path.join(__dirname, 'website')));
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain').send(renderRobots(requestOrigin(req)));
+});
 
-// Handle all proxy endpoints through the worker or fallback to SPA
-app.use(async (req, res) => {
-  const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
-  const pathname = url.pathname;
-  
-  const workerEndpoints = [
-    '/imovs',
-    '/imovs-series',
-    '/animeb',
-    '/animetv',
-    '/animetv_page',
-    '/play',
-    '/hls',
-    '/hlsseg',
-    '/hlskey'
-  ];
+app.get('/sitemap.xml', (req, res) => {
+  res.type('application/xml').send(renderSitemap(requestOrigin(req)));
+});
 
-  if (workerEndpoints.includes(pathname)) {
-    try {
-      const fullUrl = `http://localhost:${PORT}${req.url}`;
-      
-      const headers = new Headers();
-      Object.entries(req.headers).forEach(([k, v]) => {
-         if (v !== undefined) {
-           if (Array.isArray(v)) {
-             v.forEach(val => headers.append(k, val));
-           } else {
-             headers.set(k, v);
-           }
-         }
-      });
-      
-      const init = {
-        method: req.method,
-        headers: headers,
-      };
-      
-      const requestObj = new Request(fullUrl, init);
-      const responseObj = await worker.fetch(requestObj);
-      
-      res.status(responseObj.status);
-      responseObj.headers.forEach((v, k) => {
-         res.setHeader(k, v);
-      });
-      
-      if (responseObj.body) {
-         const reader = responseObj.body.getReader();
-         while (true) {
-           const { done, value } = await reader.read();
-           if (done) break;
-           res.write(value);
-         }
-      }
-      res.end();
-    } catch (e) {
-      console.error("Worker proxy error:", e);
-      if (!res.headersSent) {
-        res.status(500).send("Proxy Worker Error");
-      }
+app.use(express.static(websiteDirectory, { index: false, maxAge: '1h', etag: true }));
+
+app.use(async (req, res, next) => {
+  const pathname = new URL(req.originalUrl, requestOrigin(req)).pathname;
+  if (!workerEndpoints.has(pathname) && !pathname.startsWith('/api/tmdb/')) return next();
+  try {
+    const headers = new Headers();
+    for (const [key, value] of Object.entries(req.headers)) {
+      if (Array.isArray(value)) value.forEach(item => headers.append(key, item));
+      else if (value !== undefined) headers.set(key, value);
     }
-  } else {
-    // Return index.html for SPA routes
-    res.sendFile(path.join(__dirname, 'website', 'index.html'));
+    const body = ['GET', 'HEAD'].includes(req.method) ? undefined : Readable.toWeb(req);
+    const request = new Request(`${requestOrigin(req)}${req.originalUrl}`, {
+      method: req.method,
+      headers,
+      body,
+      duplex: body ? 'half' : undefined,
+    });
+    const response = await worker.fetch(request, process.env, { waitUntil: promise => void promise.catch(() => {}) });
+    await sendWorkerResponse(res, response);
+  } catch (error) {
+    console.error(JSON.stringify({ message: 'worker_proxy_failed', path: pathname, error: error instanceof Error ? error.message : String(error) }));
+    if (!res.headersSent) res.status(502).json({ ok: false, provider: null, errorCode: 'WORKER_PROXY_FAILED', message: 'Proxy სერვერი დროებით მიუწვდომელია.' });
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`MyFilm Server is running on port ${PORT}`);
+app.get('*path', async (req, res) => {
+  try {
+    const indexHtml = await readFile(indexPath, 'utf8');
+    const rendered = await renderSeoIndex(indexHtml, `${requestOrigin(req)}${req.originalUrl}`, process.env);
+    res.type('html').send(rendered);
+  } catch (error) {
+    console.error(JSON.stringify({ message: 'spa_render_failed', error: error instanceof Error ? error.message : String(error) }));
+    res.status(500).send('MyFilm დროებით მიუწვდომელია.');
+  }
+});
+
+app.listen(port, () => {
+  console.log(JSON.stringify({ message: 'myfilm_server_started', port }));
 });

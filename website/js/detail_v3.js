@@ -12,9 +12,18 @@ const DetailView = (() => {
   let allSeasons     = [];
   let workerEpisodes = [];   // [{season, episode, streams}]
   let currentEpIdx   = 0;
+  let outsideClickHandler = null;
+
+  function cleanup() {
+    if (outsideClickHandler) {
+      document.removeEventListener('click', outsideClickHandler);
+      outsideClickHandler = null;
+    }
+  }
 
   // ---- ENTRY ----
   async function render(params) {
+    cleanup();
     const id   = params[0];
     const type = params[1] || 'movie';
 
@@ -258,11 +267,12 @@ const DetailView = (() => {
       e.stopPropagation();
       panel.classList.remove('open');
     });
-    document.addEventListener('click', e => {
+    outsideClickHandler = e => {
       if (!document.getElementById('burger-overlay')?.contains(e.target)) {
         panel?.classList.remove('open');
       }
-    });
+    };
+    document.addEventListener('click', outsideClickHandler);
   }
 
   function buildBurgerFromEps(episodes) {
@@ -363,6 +373,6 @@ const DetailView = (() => {
 
   // Lumex has been removed
 
-  return { render };
+  return { render, cleanup };
 
 })();

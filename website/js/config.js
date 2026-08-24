@@ -3,9 +3,8 @@
 // ============================================
 
 const CONFIG = {
-  // TMDB API — უფასო key (https://www.themoviedb.org/settings/api)
-  TMDB_API_KEY: '8265bd1679663a7ea12ac168da84d2e8',
-  TMDB_BASE_URL: 'https://api.themoviedb.org/3',
+  // TMDB requests go through the same-origin server so credentials never reach the browser.
+  TMDB_BASE_URL: window.location.origin + '/api/tmdb',
   TMDB_IMAGE_BASE: 'https://image.tmdb.org/t/p',
   TMDB_LANGUAGE: 'ka-GE',
   TMDB_LANGUAGE_FALLBACK: 'en-US',

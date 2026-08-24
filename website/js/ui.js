@@ -19,9 +19,9 @@ const UI = (() => {
     }, duration);
   }
 
-  // ---- NAVIGATE — uses hash router, NO page reload ----
   function goToDetail(id, type) {
-    Router.go(`/movie/${id}/${type}`);
+    const customAnime = typeof CUSTOM_ANIMES !== 'undefined' && CUSTOM_ANIMES.some(item => String(item.id) === String(id));
+    Router.go(`/${customAnime ? 'anime' : type}/${id}`);
   }
 
   // ---- Build Movie Card ----
@@ -37,6 +37,9 @@ const UI = (() => {
 
     const card = document.createElement('div');
     card.className = 'movie-card';
+    card.tabIndex = 0;
+    card.setAttribute('role', 'link');
+    card.setAttribute('aria-label', `${titleText} — ${typeLabel}`);
     card.dataset.id   = item.id;
     card.dataset.type = type;
 
@@ -60,6 +63,12 @@ const UI = (() => {
 
     // ONE click handler — always goes to detail
     card.addEventListener('click', () => goToDetail(item.id, type));
+    card.addEventListener('keydown', event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        goToDetail(item.id, type);
+      }
+    });
 
     return card;
   }
