@@ -1026,6 +1026,21 @@ footer {
   border-radius: var(--radius-lg);
 }
 
+/* Keep the browser's own video fullscreen control, but remove the inline
+   player size limits once the video enters the fullscreen top layer. */
+.main-video:fullscreen,
+.main-video:-webkit-full-screen {
+  width: 100vw;
+  height: 100vh;
+  max-width: none;
+  max-height: none;
+  aspect-ratio: auto;
+  object-fit: contain;
+  border-radius: 0;
+  background: #000;
+}
+.main-video::backdrop { background: #000; }
+
 /* Quality selector bar */
 .quality-bar {
   display: flex; align-items: center; gap: 10px;

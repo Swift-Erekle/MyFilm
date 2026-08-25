@@ -278,6 +278,43 @@ const Player = (() => {
       </div>`;
   }
 
+  function requestNativeVideoFullscreen(video) {
+    if (!video || document.fullscreenElement || document.webkitFullscreenElement) return;
+
+    try {
+      if (typeof video.requestFullscreen === 'function') {
+        const pending = video.requestFullscreen({ navigationUI: 'hide' });
+        pending?.catch?.(error => console.warn('video_fullscreen_failed', error?.name || error));
+        return;
+      }
+      if (typeof video.webkitRequestFullscreen === 'function') {
+        video.webkitRequestFullscreen();
+        return;
+      }
+      if (typeof video.webkitEnterFullscreen === 'function') video.webkitEnterFullscreen();
+    } catch (error) {
+      console.warn('video_fullscreen_failed', error?.name || error);
+    }
+  }
+
+  function wireNativeFullscreenControl(video) {
+    // Some Chromium/WebView builds render the native fullscreen glyph but do
+    // not perform its default action. Reuse that exact bottom-right hit area;
+    // no second MyFilm control is rendered.
+    video.addEventListener('pointerdown', event => {
+      if (!event.isTrusted || event.button > 0) return;
+      const rect = video.getBoundingClientRect();
+      const edge = Math.min(72, Math.max(48, rect.height * 0.16));
+      const isFullscreenControl = event.clientX >= rect.right - edge
+        && event.clientY >= rect.bottom - edge;
+      if (!isFullscreenControl) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      requestNativeVideoFullscreen(video);
+    }, true);
+  }
+
   async function renderNative(el, streams, onErrorFallback) {
     streams = realStreams(streams);
     if (!streams.length) {
@@ -298,6 +335,7 @@ const Player = (() => {
     el.innerHTML = nativeHtml(streams, currentIdx);
     const video = el.querySelector('#main-video');
     const sel   = el.querySelector('#quality-select');
+    wireNativeFullscreenControl(video);
 
     let iframeWrap = document.createElement('div');
     iframeWrap.className = 'iframe-player-wrap';

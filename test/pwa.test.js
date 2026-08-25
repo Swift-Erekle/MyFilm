@@ -41,3 +41,18 @@ test('website links the manifest, Apple icon, and TV-only APK', async () => {
   assert.match(html, /v1\.1\.0\/MyFilm-TV\.apk/);
   assert.doesNotMatch(html, /v1\.0\.0\/MyFilm\.apk/);
 });
+
+test('native video fullscreen removes inline size limits without adding another control', async () => {
+  const css = await readFile(new URL('css/style.css', website), 'utf8');
+  const player = await readFile(new URL('js/player_v3.js', website), 'utf8');
+  const fullscreenRule = css.match(/\.main-video:fullscreen,[\s\S]*?\}/)?.[0] || '';
+
+  assert.match(fullscreenRule, /height:\s*100vh/);
+  assert.match(fullscreenRule, /max-height:\s*none/);
+  assert.match(fullscreenRule, /aspect-ratio:\s*auto/);
+  assert.match(player, /function requestNativeVideoFullscreen\(video\)/);
+  assert.match(player, /function wireNativeFullscreenControl\(video\)/);
+  assert.match(player, /video\.requestFullscreen\(\{ navigationUI: 'hide' \}\)/);
+  assert.match(player, /video\.webkitEnterFullscreen\(\)/);
+  assert.doesNotMatch(player, /data-myfilm-fullscreen|myfilm-fullscreen-btn/);
+});
