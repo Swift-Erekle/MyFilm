@@ -139,25 +139,42 @@ async function mockApplicationApi(page, { geMovieAvailable = true, animebAvailab
 test('clean navigation and legacy hash migration work', async ({ page }) => {
   await page.goto('/');
   await expect(page.locator('.nav-brand')).toBeVisible();
-  if (await page.locator('#nav-burger').isVisible()) await page.locator('#nav-burger').click();
+  if (await page.locator('#nav-burger').isVisible()) {
+    await page.locator('#nav-burger').click();
+    await expect(page.locator('.nav-links')).toHaveClass(/nav-open/);
+  }
+  await page.locator('#nav-movies').click();
+  await expect(page).toHaveURL(/\/movies$/);
+  await page.goBack();
+  await expect(page).toHaveURL(/\/$/);
+  if (await page.locator('#nav-burger').isVisible()) {
+    await page.locator('#nav-burger').click();
+    await expect(page.locator('.nav-links')).toHaveClass(/nav-open/);
+  }
   await page.locator('#nav-search').click();
   await expect(page).toHaveURL(/\/search$/);
-  await page.goto('/#/movies');
+  await page.evaluate(() => { window.location.hash = '#/movies'; });
   await expect(page).toHaveURL(/\/movies$/);
 });
 
-test('APK dialog opens and remains keyboard accessible', async ({ page }) => {
+test('install dialog offers PWA on phones and the TV-only APK elsewhere', async ({ page }, testInfo) => {
   await page.goto('/');
   await page.locator('#app-download-open').click();
   await expect(page.locator('#app-download-dialog')).toBeVisible();
-  await expect(page.locator('.dialog-download')).toHaveAttribute('href', /MyFilm\.apk$/);
+  if (testInfo.project.name === 'mobile') {
+    await expect(page.locator('[data-install-panel="pwa-help"]')).toBeVisible();
+    await expect(page.locator('#tv-download-action')).not.toBeVisible();
+  } else {
+    await expect(page.locator('#tv-download-action')).toBeVisible();
+    await expect(page.locator('#tv-download-action')).toHaveAttribute('href', /v1\.1\.0\/MyFilm-TV\.apk$/);
+  }
   await page.keyboard.press('Escape');
   await expect(page.locator('#app-download-dialog')).not.toBeVisible();
 });
 
 test('a direct clean detail URL loads SPA assets from the site root', async ({ page }) => {
   await mockApplicationApi(page);
-  await page.goto('/movie/27205');
+  await page.goto('/movie/27205', { waitUntil: 'domcontentloaded' });
   await expect(page.locator('.nav-brand')).toBeVisible();
   await expect.poll(() => page.evaluate(() => typeof Router)).toBe('object');
   await expect.poll(() => page.evaluate(() => typeof DetailView)).toBe('object');
@@ -166,6 +183,28 @@ test('a direct clean detail URL loads SPA assets from the site root', async ({ p
   await expect(playerFrame).toHaveAttribute('sandbox', /allow-scripts/);
   await expect(page.locator('#quality-select option')).toHaveText(['ge.movie', 'imovs.ge']);
   await expect(page.locator('#quality-select')).toHaveValue('0');
+});
+
+test('MyFilm fullscreen control enters and exits a full-player surface', async ({ page }) => {
+  await mockApplicationApi(page);
+  await page.goto('/movie/27205', { waitUntil: 'domcontentloaded' });
+  const button = page.locator('[data-myfilm-fullscreen]');
+  await expect(button).toBeVisible();
+  await button.click();
+  await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement || document.querySelector('.myfilm-css-fullscreen')))).toBe(true);
+  await page.keyboard.press('Escape');
+  await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement || document.querySelector('.myfilm-css-fullscreen')))).toBe(false);
+});
+
+test('Android TV user agent enables directional focus navigation', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV-only behavior');
+  await mockApplicationApi(page);
+  await page.goto('/');
+  await expect.poll(() => page.evaluate(() => document.documentElement.classList.contains('myfilm-tv'))).toBe(true);
+  const card = page.locator('.movie-card').first();
+  await card.focus();
+  await page.keyboard.press('ArrowRight');
+  await expect.poll(() => page.evaluate(() => document.activeElement?.classList.contains('movie-card'))).toBe(true);
 });
 
 test('ge.movie is hidden when its catalog reports the title as unavailable', async ({ page }) => {

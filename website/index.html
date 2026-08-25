@@ -5,8 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="description" content="MyFilm — უყურე ფილმებს, სერიალებსა და ანიმეს ონლაინ ქართულად.">
   <meta name="theme-color" content="#0a0a0f">
+  <meta name="application-name" content="MyFilm">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MyFilm">
   <title>MyFilm — ონლაინ კინო</title>
   <link rel="icon" type="image/png" href="/favicon.png">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <link rel="manifest" href="/manifest.webmanifest">
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
@@ -38,9 +44,9 @@
     </div>
 
     <div class="nav-right">
-      <a href="https://github.com/Swift-Erekle/MyFilm/releases/download/v1.0.0/MyFilm.apk" id="app-download-open" class="nav-download-btn" title="ჩამოტვირთე Android აპლიკაცია (APK)">
+      <button type="button" id="app-download-open" class="nav-download-btn" title="MyFilm-ის დაყენება">
         <span>📲 აპლიკაცია</span>
-      </a>
+      </button>
       <div class="nav-search-wrap">
         <span class="nav-search-icon">🔍</span>
         <input
@@ -82,10 +88,20 @@
 
   <dialog id="app-download-dialog" class="app-download-dialog" aria-labelledby="app-download-title">
     <button class="dialog-close" id="app-download-close" aria-label="დახურვა">×</button>
-    <div class="dialog-app-icon" aria-hidden="true">▶</div>
-    <h2 id="app-download-title">MyFilm Android აპი</h2>
-    <p>ჩამოტვირთე ოფიციალური APK და უყურე MyFilm-ს ტელეფონიდან ან Android TV-დან.</p>
-    <a class="btn-primary dialog-download" href="https://github.com/Swift-Erekle/MyFilm/releases/download/v1.0.0/MyFilm.apk">📲 APK-ის ჩამოტვირთვა</a>
+    <img class="dialog-app-icon" src="/icons/icon-192.png" alt="" width="72" height="72">
+    <h2 id="app-download-title">MyFilm-ის დაყენება</h2>
+    <section data-install-panel="pwa-help" hidden>
+      <p>Chrome-ის მენიუში აირჩიე „Install app“ ან „Add to Home screen“ და MyFilm ტელეფონზე აპივით გაიხსნება.</p>
+      <button type="button" class="btn-primary dialog-install" id="pwa-install-action">📲 PWA-ის დაყენება</button>
+    </section>
+    <section data-install-panel="ios" hidden>
+      <p>Safari-ში დააჭირე Share ღილაკს, შემდეგ აირჩიე „Add to Home Screen“ და დაადასტურე დამატება.</p>
+      <div class="ios-install-steps">Share → Add to Home Screen → Add</div>
+    </section>
+    <section data-install-panel="tv" hidden>
+      <p>ეს APK განკუთვნილია მხოლოდ Android TV-სთვის და სრულად იმართება პულტით.</p>
+      <a class="btn-primary dialog-download" id="tv-download-action" href="https://github.com/Swift-Erekle/MyFilm/releases/download/v1.1.0/MyFilm-TV.apk">📺 MyFilm-TV.apk</a>
+    </section>
   </dialog>
 
   <!-- ===== SCRIPTS (order matters!) ===== -->
@@ -93,12 +109,15 @@
   <script src="/js/custom_animes.js"></script>
   <script src="/js/router.js"></script>
   <script src="/js/api.js"></script>
+  <script src="/js/platform.js"></script>
   <script src="/js/player_v3.js"></script>
   <script src="/js/ui.js"></script>
   <script src="/js/home.js"></script>
   <script src="/js/browse.js"></script>
   <script src="/js/detail_v3.js"></script>
   <script src="/js/search_v3.js"></script>
+  <script src="/js/pwa.js"></script>
+  <script src="/js/tv-navigation.js"></script>
 
   <!-- ===== APP BOOTSTRAP ===== -->
   <script>
@@ -147,17 +166,6 @@
       }
       window.addEventListener('myfilm:navigation', setActiveNav);
       setActiveNav();
-
-      const downloadDialog = document.getElementById('app-download-dialog');
-      document.getElementById('app-download-open')?.addEventListener('click', event => {
-        event.preventDefault();
-        if (typeof downloadDialog?.showModal === 'function') downloadDialog.showModal();
-        else window.location.href = event.currentTarget.href;
-      });
-      document.getElementById('app-download-close')?.addEventListener('click', () => downloadDialog?.close());
-      downloadDialog?.addEventListener('click', event => {
-        if (event.target === downloadDialog) downloadDialog.close();
-      });
 
       // Burger Menu Toggle
       const burger = document.getElementById('nav-burger');

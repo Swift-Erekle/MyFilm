@@ -19,7 +19,20 @@ export default defineConfig({
   },
   projects: [
     { name: 'desktop', use: { viewport: { width: 1366, height: 768 } } },
-    { name: 'mobile', use: { viewport: { width: 390, height: 844 } } },
-    { name: 'tv', use: { viewport: { width: 1920, height: 1080 } } },
+    {
+      name: 'mobile',
+      use: {
+        viewport: { width: 390, height: 844 },
+        userAgent: 'Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36 Chrome/125 Mobile Safari/537.36',
+        hasTouch: true,
+      },
+    },
+    {
+      name: 'tv',
+      use: {
+        viewport: { width: 1920, height: 1080 },
+        userAgent: 'Mozilla/5.0 (Linux; Android 14; Android TV) AppleWebKit/537.36 Chrome/125 Safari/537.36 MyFilmTV/1.1.0',
+      },
+    },
   ],
 });

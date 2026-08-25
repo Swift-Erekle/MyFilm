@@ -135,30 +135,8 @@ const UI = (() => {
     window.addEventListener('scroll', fn, { passive: true });
     fn();
 
-    // Nav search
-    const inp = document.getElementById('nav-search-input');
-    if (inp) {
-      inp.addEventListener('keydown', e => {
-        if (e.key === 'Enter' && inp.value.trim()) {
-          inp.value = '';
-          Router.go(`/search/${encodeURIComponent(inp.value.trim())}`);
-        }
-      });
-      inp.addEventListener('input', e => {
-        // live search trigger
-        const q = inp.value.trim();
-        if (q.length >= 2) {
-          clearTimeout(inp._t);
-          inp._t = setTimeout(() => Router.go(`/search/${encodeURIComponent(q)}`), 400);
-        }
-      });
-    }
-
-    // Nav links
-    document.getElementById('nav-home')?.addEventListener('click', e => { e.preventDefault(); Router.go('/home'); });
-    document.getElementById('nav-movies')?.addEventListener('click', e => { e.preventDefault(); Router.go('/search-movies'); });
-    document.getElementById('nav-tv')?.addEventListener('click', e => { e.preventDefault(); Router.go('/search-tv'); });
-    document.getElementById('nav-search')?.addEventListener('click', e => { e.preventDefault(); Router.go('/search'); });
+    // Navigation and search are wired once in index.html so History API entries
+    // stay deterministic for browser and Android TV Back handling.
   }
 
   // ---- Format runtime ----

@@ -91,6 +91,42 @@
   cursor: pointer;
 }
 .dialog-download { display: inline-flex; text-decoration: none; }
+.dialog-install { margin: 0 auto; }
+.ios-install-steps {
+  padding: 14px;
+  border-radius: 12px;
+  background: rgba(255,255,255,0.08);
+  color: #fff;
+  font-weight: 700;
+}
+
+.pwa-update-banner {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  z-index: 5000;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: min(520px, calc(100vw - 28px));
+  padding: 13px 16px;
+  border: 1px solid rgba(255,255,255,0.18);
+  border-radius: 14px;
+  color: #fff;
+  background: rgba(18,18,25,0.98);
+  box-shadow: 0 16px 45px rgba(0,0,0,0.65);
+}
+.pwa-update-banner span { flex: 1; }
+.pwa-update-banner button {
+  border: 0;
+  border-radius: 9px;
+  padding: 9px 14px;
+  color: #fff;
+  background: var(--accent);
+  font-weight: 700;
+  cursor: pointer;
+}
 
 @media (min-width: 1600px) and (hover: none) {
   .nav-links a, .nav-download-btn, button { min-height: 48px; }
@@ -230,6 +266,8 @@ ul   { list-style: none; }
   font-size: 0.85rem; font-weight: 500;
   white-space: nowrap;
   transition: var(--transition);
+  cursor: pointer;
+  font-family: inherit;
 }
 .nav-download-btn:hover {
   background: var(--accent);
@@ -720,6 +758,7 @@ ul   { list-style: none; }
   position: relative;
   border-radius: var(--radius-lg);
   background: #000;
+  overflow: hidden;
 }
 .player-container {
   width: 100%;
@@ -730,6 +769,70 @@ ul   { list-style: none; }
   width: 100%; height: 100%;
   border: none; display: block;
 }
+
+.myfilm-fullscreen-btn {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  z-index: 80;
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,0.3);
+  border-radius: 12px;
+  color: #fff;
+  background: rgba(8,8,14,0.9);
+  font-size: 25px;
+  line-height: 1;
+  cursor: pointer;
+  backdrop-filter: blur(10px);
+}
+.myfilm-fullscreen-btn:hover,
+.myfilm-fullscreen-btn:focus-visible { background: var(--accent); border-color: var(--accent); }
+
+.player-wrapper:fullscreen,
+.player-wrapper:-webkit-full-screen,
+.player-wrapper.myfilm-css-fullscreen {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  border-radius: 0;
+  background: #000;
+}
+.player-wrapper:fullscreen .player-container,
+.player-wrapper:-webkit-full-screen .player-container,
+.player-wrapper.myfilm-css-fullscreen .player-container,
+.player-wrapper:fullscreen .native-player-wrap,
+.player-wrapper:-webkit-full-screen .native-player-wrap,
+.player-wrapper.myfilm-css-fullscreen .native-player-wrap,
+.player-wrapper:fullscreen .iframe-player-wrap,
+.player-wrapper:-webkit-full-screen .iframe-player-wrap,
+.player-wrapper.myfilm-css-fullscreen .iframe-player-wrap,
+.player-wrapper:fullscreen .main-video,
+.player-wrapper:-webkit-full-screen .main-video,
+.player-wrapper.myfilm-css-fullscreen .main-video {
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  aspect-ratio: auto;
+  border-radius: 0;
+}
+.player-wrapper.myfilm-css-fullscreen {
+  position: fixed !important;
+  inset: 0 !important;
+  z-index: 10000 !important;
+}
+html.myfilm-fullscreen-active,
+body.myfilm-fullscreen-active { overflow: hidden !important; background: #000; }
+
+html.myfilm-tv :focus-visible {
+  outline: 4px solid #fff;
+  outline-offset: 5px;
+  box-shadow: 0 0 0 9px rgba(229,9,20,0.8);
+}
+html.myfilm-tv .myfilm-fullscreen-btn { width: 58px; height: 58px; font-size: 30px; }
 
 /* Now playing */
 .now-playing-label {
@@ -1107,7 +1210,7 @@ footer {
   margin-right: 16px;
   flex-direction: column;
   gap: 5px;
-  z-index: 1001;
+  z-index: 1003;
 }
 .nav-burger span {
   display: block;
@@ -1169,7 +1272,8 @@ footer {
     pointer-events: none;
     transform: translateY(-20px);
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-    z-index: 999;
+    /* Keep the full-screen drawer above both the hero and the fixed navbar. */
+    z-index: 1002;
   }
   
   .nav-links.nav-open {

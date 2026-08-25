@@ -43,6 +43,16 @@ app.get('/sitemap.xml', (req, res) => {
   res.type('application/xml').send(renderSitemap(requestOrigin(req)));
 });
 
+app.get('/sw.js', (req, res) => {
+  res.set('Cache-Control', 'no-cache, no-store, must-revalidate');
+  res.type('application/javascript').sendFile(path.join(websiteDirectory, 'sw.js'));
+});
+
+app.get('/manifest.webmanifest', (req, res) => {
+  res.set('Cache-Control', 'public, max-age=3600');
+  res.type('application/manifest+json').sendFile(path.join(websiteDirectory, 'manifest.webmanifest'));
+});
+
 app.use(express.static(websiteDirectory, { index: false, maxAge: '1h', etag: true }));
 
 app.use(async (req, res, next) => {
