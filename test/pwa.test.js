@@ -12,6 +12,10 @@ test('PWA manifest exposes installable MyFilm icons and standalone mode', async 
   assert.equal(manifest.start_url.startsWith('/'), true);
   assert.ok(manifest.icons.some(icon => icon.sizes === '192x192'));
   assert.ok(manifest.icons.some(icon => icon.sizes === '512x512' && icon.purpose === 'maskable'));
+  for (const icon of manifest.icons) {
+    await assert.doesNotReject(readFile(new URL(icon.src.replace(/^\//, ''), website)));
+  }
+  await assert.doesNotReject(readFile(new URL('icons/apple-touch-icon.png', website)));
 });
 
 test('service worker never caches API, scraper, HLS, or player routes', async () => {

@@ -1,10 +1,11 @@
-import { defineConfig } from '@playwright/test';
+import { defineConfig, devices } from '@playwright/test';
 
 export default defineConfig({
   testDir: './test/browser',
   timeout: 30_000,
   use: {
     baseURL: 'http://127.0.0.1:8094',
+    serviceWorkers: 'block',
     trace: 'retain-on-failure',
   },
   webServer: {
@@ -25,6 +26,12 @@ export default defineConfig({
         viewport: { width: 390, height: 844 },
         userAgent: 'Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36 Chrome/125 Mobile Safari/537.36',
         hasTouch: true,
+      },
+    },
+    {
+      name: 'iphone',
+      use: {
+        ...devices['iPhone 15'],
       },
     },
     {

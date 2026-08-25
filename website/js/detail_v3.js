@@ -165,9 +165,6 @@ const DetailView = (() => {
               </div>
             </div>
 
-            <button type="button" class="myfilm-fullscreen-btn" data-myfilm-fullscreen
-              aria-label="სრულ ეკრანზე გადიდება" aria-pressed="false">⛶</button>
-
             ${mediaType === 'tv' ? `
             <!-- TV BURGER -->
             <div class="player-burger-overlay" id="burger-overlay">
@@ -202,10 +199,6 @@ const DetailView = (() => {
       document.getElementById('player-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
     document.getElementById('btn-back')?.addEventListener('click', () => Router.go('/home'));
-    document.querySelector('[data-myfilm-fullscreen]')?.addEventListener('click', () => {
-      MyFilmPlatform.toggle(document.getElementById('player-wrapper'));
-    });
-
     const customObj = (typeof CUSTOM_ANIMES !== 'undefined') ? CUSTOM_ANIMES.find(a => String(a.id) === String(tmdbId)) : null;
 
     // Build info object for player

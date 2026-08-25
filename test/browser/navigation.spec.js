@@ -161,7 +161,10 @@ test('install dialog offers PWA on phones and the TV-only APK elsewhere', async 
   await page.goto('/');
   await page.locator('#app-download-open').click();
   await expect(page.locator('#app-download-dialog')).toBeVisible();
-  if (testInfo.project.name === 'mobile') {
+  if (testInfo.project.name === 'iphone') {
+    await expect(page.locator('[data-install-panel="ios"]')).toBeVisible();
+    await expect(page.locator('#tv-download-action')).not.toBeVisible();
+  } else if (testInfo.project.name === 'mobile') {
     await expect(page.locator('[data-install-panel="pwa-help"]')).toBeVisible();
     await expect(page.locator('#tv-download-action')).not.toBeVisible();
   } else {
@@ -170,6 +173,30 @@ test('install dialog offers PWA on phones and the TV-only APK elsewhere', async 
   }
   await page.keyboard.press('Escape');
   await expect(page.locator('#app-download-dialog')).not.toBeVisible();
+});
+
+test('PWA service worker installs and caches the static app shell', async ({ browser }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop', 'One Chromium installability check is sufficient');
+  const context = await browser.newContext({
+    baseURL: 'http://127.0.0.1:8094',
+    serviceWorkers: 'allow',
+  });
+  const page = await context.newPage();
+  await page.goto('/');
+  const result = await page.evaluate(async () => {
+    const registration = await navigator.serviceWorker.ready;
+    const cacheNames = await caches.keys();
+    const cachedUrls = (await Promise.all(cacheNames.map(async name => {
+      const cache = await caches.open(name);
+      return (await cache.keys()).map(request => new URL(request.url).pathname);
+    }))).flat();
+    return { scope: registration.scope, cacheNames, cachedUrls };
+  });
+  expect(result.scope).toBe('http://127.0.0.1:8094/');
+  expect(result.cacheNames).toContain('myfilm-shell-v1.1.0');
+  expect(result.cachedUrls).toContain('/offline.html');
+  expect(result.cachedUrls.some(path => /^\/(?:api|imovs|play|hls)/.test(path))).toBe(false);
+  await context.close();
 });
 
 test('a direct clean detail URL loads SPA assets from the site root', async ({ page }) => {
@@ -185,15 +212,13 @@ test('a direct clean detail URL loads SPA assets from the site root', async ({ p
   await expect(page.locator('#quality-select')).toHaveValue('0');
 });
 
-test('MyFilm fullscreen control enters and exits a full-player surface', async ({ page }) => {
+test('player keeps provider fullscreen controls and grants the iframe permission', async ({ page }) => {
   await mockApplicationApi(page);
   await page.goto('/movie/27205', { waitUntil: 'domcontentloaded' });
-  const button = page.locator('[data-myfilm-fullscreen]');
-  await expect(button).toBeVisible();
-  await button.click();
-  await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement || document.querySelector('.myfilm-css-fullscreen')))).toBe(true);
-  await page.keyboard.press('Escape');
-  await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement || document.querySelector('.myfilm-css-fullscreen')))).toBe(false);
+  const iframe = page.locator('.iframe-player-wrap iframe');
+  await expect(iframe).toHaveAttribute('allowfullscreen', '');
+  await expect(iframe).toHaveAttribute('allow', /fullscreen/);
+  await expect(page.locator('[data-myfilm-fullscreen]')).toHaveCount(0);
 });
 
 test('Android TV user agent enables directional focus navigation', async ({ page }, testInfo) => {

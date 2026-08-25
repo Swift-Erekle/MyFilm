@@ -30,6 +30,8 @@ website_worker_node.js
 *.jpg
 *.jpeg
 !website/favicon.png
+!website/icons/
+!website/icons/*.png
 
 # Local secrets
 .env

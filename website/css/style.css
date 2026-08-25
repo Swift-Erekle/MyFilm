@@ -770,70 +770,11 @@ ul   { list-style: none; }
   border: none; display: block;
 }
 
-.myfilm-fullscreen-btn {
-  position: absolute;
-  right: 14px;
-  bottom: 14px;
-  z-index: 80;
-  width: 48px;
-  height: 48px;
-  display: grid;
-  place-items: center;
-  border: 1px solid rgba(255,255,255,0.3);
-  border-radius: 12px;
-  color: #fff;
-  background: rgba(8,8,14,0.9);
-  font-size: 25px;
-  line-height: 1;
-  cursor: pointer;
-  backdrop-filter: blur(10px);
-}
-.myfilm-fullscreen-btn:hover,
-.myfilm-fullscreen-btn:focus-visible { background: var(--accent); border-color: var(--accent); }
-
-.player-wrapper:fullscreen,
-.player-wrapper:-webkit-full-screen,
-.player-wrapper.myfilm-css-fullscreen {
-  width: 100vw !important;
-  height: 100vh !important;
-  max-width: none !important;
-  max-height: none !important;
-  border-radius: 0;
-  background: #000;
-}
-.player-wrapper:fullscreen .player-container,
-.player-wrapper:-webkit-full-screen .player-container,
-.player-wrapper.myfilm-css-fullscreen .player-container,
-.player-wrapper:fullscreen .native-player-wrap,
-.player-wrapper:-webkit-full-screen .native-player-wrap,
-.player-wrapper.myfilm-css-fullscreen .native-player-wrap,
-.player-wrapper:fullscreen .iframe-player-wrap,
-.player-wrapper:-webkit-full-screen .iframe-player-wrap,
-.player-wrapper.myfilm-css-fullscreen .iframe-player-wrap,
-.player-wrapper:fullscreen .main-video,
-.player-wrapper:-webkit-full-screen .main-video,
-.player-wrapper.myfilm-css-fullscreen .main-video {
-  width: 100%;
-  height: 100%;
-  max-height: none;
-  aspect-ratio: auto;
-  border-radius: 0;
-}
-.player-wrapper.myfilm-css-fullscreen {
-  position: fixed !important;
-  inset: 0 !important;
-  z-index: 10000 !important;
-}
-html.myfilm-fullscreen-active,
-body.myfilm-fullscreen-active { overflow: hidden !important; background: #000; }
-
 html.myfilm-tv :focus-visible {
   outline: 4px solid #fff;
   outline-offset: 5px;
   box-shadow: 0 0 0 9px rgba(229,9,20,0.8);
 }
-html.myfilm-tv .myfilm-fullscreen-btn { width: 58px; height: 58px; font-size: 30px; }
-
 /* Now playing */
 .now-playing-label {
   margin-top: 10px;
