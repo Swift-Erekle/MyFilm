@@ -41,7 +41,7 @@ const MyFilmPWA = (() => {
   }
 
   function handleInstallButton() {
-    if (isStandalone()) return;
+    if (isStandalone() || isTV()) return;
     if (isTV() || !isMobile()) showDialog('tv');
     else if (deferredPrompt) promptInstall();
     else showDialog(isIOS() ? 'ios' : 'pwa-help');
@@ -90,7 +90,7 @@ const MyFilmPWA = (() => {
     document.getElementById('app-download-dialog')?.addEventListener('click', event => {
       if (event.target === event.currentTarget) event.currentTarget.close();
     });
-    if (isStandalone()) open?.setAttribute('hidden', '');
+    if (isStandalone() || isTV()) open?.setAttribute('hidden', '');
     registerServiceWorker().catch(error => console.warn('PWA registration failed', error));
   }
 

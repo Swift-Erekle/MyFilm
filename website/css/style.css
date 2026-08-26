@@ -50,7 +50,12 @@
 }
 
 .app-download-dialog {
+  position: fixed;
+  inset: 0;
+  margin: auto;
   width: min(440px, calc(100vw - 32px));
+  max-height: min(680px, calc(100vh - 32px));
+  overflow: auto;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 20px;
   padding: 34px;
@@ -59,6 +64,7 @@
   text-align: center;
   box-shadow: 0 30px 90px rgba(0, 0, 0, 0.75);
 }
+.app-download-dialog:not([open]) { display: none; }
 
 .app-download-dialog::backdrop {
   background: rgba(0, 0, 0, 0.78);
@@ -293,6 +299,8 @@ ul   { list-style: none; }
   box-shadow: 0 0 16px var(--accent-glow);
   transform: translateY(-1px);
 }
+html.myfilm-tv .nav-download-btn,
+html.myfilm-tv-native .nav-download-btn { display: none !important; }
 .nav-search-wrap {
   display: flex; align-items: center; gap: 8px;
   background: rgba(255,255,255,0.07);
@@ -1268,7 +1276,7 @@ footer {
     justify-content: center;
   }
   .nav-download-btn span { font-size: 0; }
-  .nav-download-btn span::before { content: '📲'; font-size: 18px; }
+  .nav-download-btn span::before { content: '📺'; font-size: 18px; }
   
   .nav-links {
     position: fixed;

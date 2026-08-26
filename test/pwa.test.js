@@ -36,9 +36,15 @@ test('PWA updates do not force a reload during initial install or active playbac
 
 test('website links the manifest, Apple icon, and TV-only APK', async () => {
   const html = await readFile(new URL('index.html', website), 'utf8');
+  const css = await readFile(new URL('css/style.css', website), 'utf8');
+  const pwa = await readFile(new URL('js/pwa.js', website), 'utf8');
   assert.match(html, /rel="manifest" href="\/manifest\.webmanifest"/);
   assert.match(html, /rel="apple-touch-icon"/);
   assert.match(html, /v1\.1\.0\/MyFilm-TV\.apk/);
+  assert.match(html, /<span>📺 აპლიკაცია<\/span>/);
+  assert.match(css, /\.app-download-dialog\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;[\s\S]*?margin:\s*auto;/);
+  assert.match(css, /html\.myfilm-tv\s+\.nav-download-btn/);
+  assert.match(pwa, /if \(isStandalone\(\) \|\| isTV\(\)\) open\?\.setAttribute\('hidden', ''\)/);
   assert.doesNotMatch(html, /v1\.0\.0\/MyFilm\.apk/);
 });
 
