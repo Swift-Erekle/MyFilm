@@ -5,6 +5,57 @@
 const API = (() => {
 
   const _cache = new Map();
+  const CJK_REGEX = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uFAFF\uFF66-\uFF9F\uAC00-\uD7AF]/u;
+  const hasCJK = value => typeof value === 'string' && CJK_REGEX.test(value);
+
+  function needsEnglishTitles(data) {
+    if (!data) return false;
+    const itemNeedsEnglish = item => item && [
+      item.title, item.name, item.original_title, item.original_name,
+    ].some(hasCJK);
+    if (Array.isArray(data.results) && data.results.some(itemNeedsEnglish)) return true;
+    if (Array.isArray(data.similar?.results) && data.similar.results.some(itemNeedsEnglish)) return true;
+    return itemNeedsEnglish(data);
+  }
+
+  function mergeEnglishItem(localItem, englishItem) {
+    if (!localItem || !englishItem) return localItem;
+    for (const key of ['title', 'name']) {
+      if (hasCJK(localItem[key]) && englishItem[key] && !hasCJK(englishItem[key])) {
+        localItem[key] = englishItem[key];
+      }
+    }
+    if (hasCJK(localItem.original_title) && englishItem.title && !hasCJK(englishItem.title)) {
+      localItem.original_title = englishItem.title;
+    }
+    if (hasCJK(localItem.original_name) && englishItem.name && !hasCJK(englishItem.name)) {
+      localItem.original_name = englishItem.name;
+    }
+    return localItem;
+  }
+
+  function mergeEnglishCollection(localItems, englishItems) {
+    if (!Array.isArray(localItems) || !Array.isArray(englishItems)) return;
+    const englishById = new Map(englishItems.map(item => [String(item.id), item]));
+    localItems.forEach(item => mergeEnglishItem(item, englishById.get(String(item.id))));
+  }
+
+  function mergeEnglishTitles(localData, englishData) {
+    if (!localData || !englishData) return localData;
+    if (Array.isArray(localData.results)) {
+      mergeEnglishCollection(localData.results, englishData.results);
+    } else {
+      mergeEnglishItem(localData, englishData);
+    }
+    mergeEnglishCollection(localData.similar?.results, englishData.similar?.results);
+    return localData;
+  }
+
+  async function fetchJson(url) {
+    const response = await fetch(url, { headers: { Accept: 'application/json' } });
+    if (!response.ok) throw new Error(`TMDB_${response.status}`);
+    return response.json();
+  }
 
   async function req(endpoint, extra = {}) {
     const url = new URL(CONFIG.TMDB_BASE_URL + endpoint);
@@ -16,7 +67,6 @@ const API = (() => {
 
     function cleanData(data) {
       if (!data) return data;
-      const cjkRegex = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uFAFF\uFF66-\uFF9F]/;
       const customAnimes = (typeof CUSTOM_ANIMES !== 'undefined') ? CUSTOM_ANIMES : [];
 
       const cleanItem = (i) => {
@@ -32,10 +82,8 @@ const API = (() => {
            }
         }
 
-        if (i.original_name && cjkRegex.test(i.original_name)) i.original_name = i.name || '';
-        if (i.original_title && cjkRegex.test(i.original_title)) i.original_title = i.title || '';
-        // sometimes name itself might be Japanese if Georgian is missing
-        if (i.name && cjkRegex.test(i.name)) i.name = i.original_name || '';
+        if (hasCJK(i.title) && i.original_title && !hasCJK(i.original_title)) i.title = i.original_title;
+        if (hasCJK(i.name) && i.original_name && !hasCJK(i.original_name)) i.name = i.original_name;
       };
       if (data.results && Array.isArray(data.results)) {
         // Filter out Indian content (Hindi, Tamil, Telugu, Malayalam, Kannada)
@@ -45,39 +93,29 @@ const API = (() => {
       } else {
         cleanItem(data);
       }
+      if (Array.isArray(data.similar?.results)) data.similar.results.forEach(cleanItem);
       return data;
     }
 
     try {
-      let r = await fetch(url, { headers: { Accept: 'application/json' } });
-      if (!r.ok) throw new Error(`TMDB_${r.status}`);
-      let d = await r.json();
+      let d = await fetchJson(url);
+      const englishUrl = new URL(url);
+      englishUrl.searchParams.set('language', CONFIG.TMDB_LANGUAGE_FALLBACK);
 
-      const cjkRegex = /[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\uFAFF\uFF66-\uFF9F]/;
-      const hasCJK = (str) => str && cjkRegex.test(str);
-      const isJapaneseData = (data) => {
-        if (data.results && data.results.length > 0) {
-          return hasCJK(data.results[0].title) || hasCJK(data.results[0].name);
-        }
-        return hasCJK(data.title) || hasCJK(data.name);
-      };
-
-      // Fallback to English if no results, OR if the returned main title is Japanese/Chinese
-      if ((!d.results?.length && !d.title && !d.name) || d.success === false || isJapaneseData(d)) {
-        url.searchParams.set('language', CONFIG.TMDB_LANGUAGE_FALLBACK);
-        r = await fetch(url, { headers: { Accept: 'application/json' } });
-        if (!r.ok) throw new Error(`TMDB_${r.status}`);
-        d = await r.json();
+      if ((Array.isArray(d.results) && !d.results.length) || d.success === false) {
+        d = await fetchJson(englishUrl);
+      } else if (needsEnglishTitles(d)) {
+        const englishData = await fetchJson(englishUrl);
+        d = mergeEnglishTitles(d, englishData);
       }
       d = cleanData(d);
       _cache.set(key, d);
       return d;
     } catch {
-      url.searchParams.set('language', CONFIG.TMDB_LANGUAGE_FALLBACK);
+      const englishUrl = new URL(url);
+      englishUrl.searchParams.set('language', CONFIG.TMDB_LANGUAGE_FALLBACK);
       try {
-        const r = await fetch(url, { headers: { Accept: 'application/json' } });
-        if (!r.ok) throw new Error(`TMDB_${r.status}`);
-        let d = await r.json();
+        let d = await fetchJson(englishUrl);
         d = cleanData(d);
         _cache.set(key, d);
         return d;

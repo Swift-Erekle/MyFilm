@@ -42,7 +42,7 @@ test('website links the manifest, Apple icon, and TV-only APK', async () => {
   assert.doesNotMatch(html, /v1\.0\.0\/MyFilm\.apk/);
 });
 
-test('native video fullscreen removes inline size limits without adding another control', async () => {
+test('the existing player fullscreen glyph has a reliable invisible hit target', async () => {
   const css = await readFile(new URL('css/style.css', website), 'utf8');
   const player = await readFile(new URL('js/player_v3.js', website), 'utf8');
   const fullscreenRule = css.match(/\.main-video:fullscreen,[\s\S]*?\}/)?.[0] || '';
@@ -50,9 +50,19 @@ test('native video fullscreen removes inline size limits without adding another 
   assert.match(fullscreenRule, /height:\s*100vh/);
   assert.match(fullscreenRule, /max-height:\s*none/);
   assert.match(fullscreenRule, /aspect-ratio:\s*auto/);
-  assert.match(player, /function requestNativeVideoFullscreen\(video\)/);
-  assert.match(player, /function wireNativeFullscreenControl\(video\)/);
-  assert.match(player, /video\.requestFullscreen\(\{ navigationUI: 'hide' \}\)/);
-  assert.match(player, /video\.webkitEnterFullscreen\(\)/);
+  assert.match(player, /function requestPlayerFullscreen\(element\)/);
+  assert.match(player, /function wireFullscreenHitTarget\(container, fullscreenElement\)/);
+  assert.match(player, /element\.requestFullscreen\(\{ navigationUI: 'hide' \}\)/);
+  assert.match(player, /element\.webkitEnterFullscreen\(\)/);
+  assert.match(player, /player-fullscreen-hit--iframe/);
+  assert.match(css, /\.player-fullscreen-hit\s*\{[\s\S]*?opacity:\s*0/);
+  assert.match(css, /\.iframe-player-wrap:fullscreen/);
   assert.doesNotMatch(player, /data-myfilm-fullscreen|myfilm-fullscreen-btn/);
+});
+
+test('page scrollbars use the dark MyFilm theme', async () => {
+  const css = await readFile(new URL('css/style.css', website), 'utf8');
+  assert.match(css, /scrollbar-color:\s*#5b5b66\s+#0a0a0f/);
+  assert.match(css, /::-webkit-scrollbar-thumb\s*\{/);
+  assert.match(css, /::-webkit-scrollbar-thumb:hover/);
 });

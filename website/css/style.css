@@ -154,6 +154,25 @@ body {
   overflow-x: hidden;
   -webkit-font-smoothing: antialiased;
 }
+
+/* MyFilm scrollbar */
+html {
+  scrollbar-width: thin;
+  scrollbar-color: #5b5b66 #0a0a0f;
+}
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #0a0a0f; }
+::-webkit-scrollbar-thumb {
+  min-height: 48px;
+  border: 2px solid #0a0a0f;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #777782 0%, #3d3d48 100%);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, #ef2634 0%, #a90612 100%);
+}
+::-webkit-scrollbar-corner { background: #0a0a0f; }
+
 a    { color: inherit; text-decoration: none; }
 img  { display: block; max-width: 100%; }
 button { border: none; background: none; cursor: pointer; font-family: inherit; color: inherit; }
@@ -1015,6 +1034,11 @@ footer {
   position: relative;
   background: #000;
 }
+.native-video-frame {
+  width: 100%;
+  position: relative;
+  background: #000;
+}
 
 .main-video {
   width: 100%;
@@ -1040,6 +1064,42 @@ footer {
   background: #000;
 }
 .main-video::backdrop { background: #000; }
+
+/* Invisible hit target over the player-provided fullscreen glyph. It makes
+   the existing control reliable without drawing a second MyFilm button. */
+.player-fullscreen-hit {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
+  width: 76px;
+  height: 68px;
+  padding: 0;
+  border: 0;
+  border-radius: 0 0 var(--radius-lg) 0;
+  opacity: 0;
+  background: transparent;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.player-fullscreen-hit--iframe { width: 112px; height: 78px; }
+
+.iframe-player-wrap:fullscreen,
+.iframe-player-wrap:-webkit-full-screen {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  aspect-ratio: auto !important;
+  border-radius: 0;
+  background: #000;
+}
+.iframe-player-wrap:fullscreen iframe,
+.iframe-player-wrap:-webkit-full-screen iframe {
+  width: 100% !important;
+  height: 100% !important;
+}
+.iframe-player-wrap::backdrop { background: #000; }
 
 /* Quality selector bar */
 .quality-bar {

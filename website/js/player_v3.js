@@ -268,7 +268,11 @@ const Player = (() => {
       `<option value="${i}" ${i===selectedIdx?'selected':''}>${htmlEscape(s.label||'auto')}</option>`).join('');
     return `
       <div class="native-player-wrap">
-        <video id="main-video" class="main-video" controls playsinline preload="metadata"></video>
+        <div class="native-video-frame">
+          <video id="main-video" class="main-video" controls playsinline preload="metadata"></video>
+          <button type="button" class="player-fullscreen-hit" data-player-fullscreen-hit
+            tabindex="-1" aria-label="სრულ ეკრანზე გადიდება"></button>
+        </div>
         ${streams.length>1?`
         <div class="quality-bar">
           <label class="ql-label">🎞 ხარისხი:</label>
@@ -278,41 +282,32 @@ const Player = (() => {
       </div>`;
   }
 
-  function requestNativeVideoFullscreen(video) {
-    if (!video || document.fullscreenElement || document.webkitFullscreenElement) return;
+  function requestPlayerFullscreen(element) {
+    if (!element || document.fullscreenElement || document.webkitFullscreenElement) return;
 
     try {
-      if (typeof video.requestFullscreen === 'function') {
-        const pending = video.requestFullscreen({ navigationUI: 'hide' });
+      if (typeof element.requestFullscreen === 'function') {
+        const pending = element.requestFullscreen({ navigationUI: 'hide' });
         pending?.catch?.(error => console.warn('video_fullscreen_failed', error?.name || error));
         return;
       }
-      if (typeof video.webkitRequestFullscreen === 'function') {
-        video.webkitRequestFullscreen();
+      if (typeof element.webkitRequestFullscreen === 'function') {
+        element.webkitRequestFullscreen();
         return;
       }
-      if (typeof video.webkitEnterFullscreen === 'function') video.webkitEnterFullscreen();
+      if (typeof element.webkitEnterFullscreen === 'function') element.webkitEnterFullscreen();
     } catch (error) {
       console.warn('video_fullscreen_failed', error?.name || error);
     }
   }
 
-  function wireNativeFullscreenControl(video) {
-    // Some Chromium/WebView builds render the native fullscreen glyph but do
-    // not perform its default action. Reuse that exact bottom-right hit area;
-    // no second MyFilm control is rendered.
-    video.addEventListener('pointerdown', event => {
-      if (!event.isTrusted || event.button > 0) return;
-      const rect = video.getBoundingClientRect();
-      const edge = Math.min(72, Math.max(48, rect.height * 0.16));
-      const isFullscreenControl = event.clientX >= rect.right - edge
-        && event.clientY >= rect.bottom - edge;
-      if (!isFullscreenControl) return;
-
+  function wireFullscreenHitTarget(container, fullscreenElement) {
+    const hitTarget = container?.querySelector('[data-player-fullscreen-hit]');
+    hitTarget?.addEventListener('click', event => {
       event.preventDefault();
       event.stopPropagation();
-      requestNativeVideoFullscreen(video);
-    }, true);
+      requestPlayerFullscreen(fullscreenElement);
+    });
   }
 
   async function renderNative(el, streams, onErrorFallback) {
@@ -335,7 +330,7 @@ const Player = (() => {
     el.innerHTML = nativeHtml(streams, currentIdx);
     const video = el.querySelector('#main-video');
     const sel   = el.querySelector('#quality-select');
-    wireNativeFullscreenControl(video);
+    wireFullscreenHitTarget(el.querySelector('.native-video-frame'), video);
 
     let iframeWrap = document.createElement('div');
     iframeWrap.className = 'iframe-player-wrap';
@@ -493,10 +488,12 @@ const Player = (() => {
     }
     return `
       <div class="iframe-player-wrap">
-        <iframe src="${htmlEscape(url)}" allowfullscreen sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+        <iframe src="${htmlEscape(url)}" allowfullscreen scrolling="no" sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
           allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
           referrerpolicy="no-referrer"
           style="width:100%;height:100%;border:none;display:block"></iframe>
+        <button type="button" class="player-fullscreen-hit player-fullscreen-hit--iframe"
+          data-player-fullscreen-hit tabindex="-1" aria-label="სრულ ეკრანზე გადიდება"></button>
         <div class="iframe-badge">${label}</div>
       </div>`;
   }
@@ -512,9 +509,11 @@ const Player = (() => {
       return;
     }
     container.innerHTML = '';
+    container.classList.add('iframe-player-wrap');
     const iframe = document.createElement('iframe');
     iframe.allowFullscreen = true;
     iframe.setAttribute('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture');
+    iframe.setAttribute('scrolling', 'no');
     iframe.referrerPolicy = 'no-referrer';
     iframe.style.width = '100%';
     iframe.style.height = '100%';
@@ -541,6 +540,15 @@ const Player = (() => {
       badge.textContent = label;
       container.appendChild(badge);
     }
+
+    const fullscreenHit = document.createElement('button');
+    fullscreenHit.type = 'button';
+    fullscreenHit.className = 'player-fullscreen-hit player-fullscreen-hit--iframe';
+    fullscreenHit.dataset.playerFullscreenHit = '';
+    fullscreenHit.tabIndex = -1;
+    fullscreenHit.setAttribute('aria-label', 'სრულ ეკრანზე გადიდება');
+    container.appendChild(fullscreenHit);
+    wireFullscreenHitTarget(container, container);
   }
 
 // ─── Loading HTML ───

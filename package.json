@@ -7,7 +7,7 @@
   "scripts": {
     "start": "node server.js",
     "check": "node --check server.js && node --check cloudflare.js",
-    "test": "node --test test/provider-fixtures.test.js test/providers.test.js test/anime.test.js test/croconet.test.js test/search-engine.test.js test/security.test.js test/seo.test.js test/pwa.test.js test/worker-contract.test.js test/live.test.js",
+    "test": "node --test test/provider-fixtures.test.js test/providers.test.js test/anime.test.js test/api.test.js test/croconet.test.js test/search-engine.test.js test/security.test.js test/seo.test.js test/pwa.test.js test/worker-contract.test.js test/live.test.js",
     "test:live": "node scripts/run-live-tests.js",
     "test:browser": "playwright test",
     "diagnose:providers": "node scripts/provider-diagnostics.js",
