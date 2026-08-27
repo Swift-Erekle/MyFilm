@@ -157,20 +157,18 @@ test('clean navigation and legacy hash migration work', async ({ page }) => {
   await expect(page).toHaveURL(/\/movies$/);
 });
 
-test('install dialog offers PWA on phones and the TV-only APK elsewhere', async ({ page }, testInfo) => {
+test('install dialog always offers the Android TV APK', async ({ page }, testInfo) => {
   await page.goto('/');
+  if (testInfo.project.name === 'tv') {
+    await expect(page.locator('#app-download-open')).toBeHidden();
+    return;
+  }
   await page.locator('#app-download-open').click();
   await expect(page.locator('#app-download-dialog')).toBeVisible();
-  if (testInfo.project.name === 'iphone') {
-    await expect(page.locator('[data-install-panel="ios"]')).toBeVisible();
-    await expect(page.locator('#tv-download-action')).not.toBeVisible();
-  } else if (testInfo.project.name === 'mobile') {
-    await expect(page.locator('[data-install-panel="pwa-help"]')).toBeVisible();
-    await expect(page.locator('#tv-download-action')).not.toBeVisible();
-  } else {
-    await expect(page.locator('#tv-download-action')).toBeVisible();
-    await expect(page.locator('#tv-download-action')).toHaveAttribute('href', /v1\.1\.0\/MyFilm-TV\.apk$/);
-  }
+  await expect(page.locator('[data-install-panel="pwa-help"]')).toHaveCount(0);
+  await expect(page.locator('[data-install-panel="ios"]')).toHaveCount(0);
+  await expect(page.locator('#tv-download-action')).toBeVisible();
+  await expect(page.locator('#tv-download-action')).toHaveAttribute('href', /v1\.1\.0\/MyFilm-TV\.apk$/);
   await page.keyboard.press('Escape');
   await expect(page.locator('#app-download-dialog')).not.toBeVisible();
 });
@@ -193,7 +191,7 @@ test('PWA service worker installs and caches the static app shell', async ({ bro
     return { scope: registration.scope, cacheNames, cachedUrls };
   });
   expect(result.scope).toBe('http://127.0.0.1:8094/');
-  expect(result.cacheNames).toContain('myfilm-shell-v1.1.0');
+  expect(result.cacheNames).toContain('myfilm-shell-v1.1.4');
   expect(result.cachedUrls).toContain('/offline.html');
   expect(result.cachedUrls.some(path => /^\/(?:api|imovs|play|hls)/.test(path))).toBe(false);
   await context.close();

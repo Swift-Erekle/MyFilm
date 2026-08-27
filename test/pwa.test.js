@@ -41,10 +41,13 @@ test('website links the manifest, Apple icon, and TV-only APK', async () => {
   assert.match(html, /rel="manifest" href="\/manifest\.webmanifest"/);
   assert.match(html, /rel="apple-touch-icon"/);
   assert.match(html, /v1\.1\.0\/MyFilm-TV\.apk/);
+  assert.doesNotMatch(html, /data-install-panel="pwa-help"|data-install-panel="ios"|id="pwa-install-action"/);
   assert.match(html, /<span>📺 აპლიკაცია<\/span>/);
   assert.match(css, /\.app-download-dialog\s*\{[\s\S]*?position:\s*fixed;[\s\S]*?inset:\s*0;[\s\S]*?margin:\s*auto;/);
   assert.match(css, /html\.myfilm-tv\s+\.nav-download-btn/);
   assert.match(pwa, /if \(isStandalone\(\) \|\| isTV\(\)\) open\?\.setAttribute\('hidden', ''\)/);
+  assert.match(pwa, /function handleInstallButton\(\) \{[\s\S]*?showDialog\('tv'\);[\s\S]*?\}/);
+  assert.doesNotMatch(pwa, /install-ready|deferredPrompt|promptInstall|showDialog\(isIOS/);
   assert.doesNotMatch(html, /v1\.0\.0\/MyFilm\.apk/);
 });
 

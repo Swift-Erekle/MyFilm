@@ -1,12 +1,9 @@
 const MyFilmPWA = (() => {
   const TV_APK_URL = 'https://github.com/Swift-Erekle/MyFilm/releases/download/v1.1.0/MyFilm-TV.apk';
-  let deferredPrompt = null;
   let reloadRequested = false;
   let reloadPending = false;
 
   const isStandalone = () => window.matchMedia('(display-mode: standalone)').matches || window.navigator.standalone === true;
-  const isIOS = () => /iphone|ipad|ipod/i.test(navigator.userAgent);
-  const isMobile = () => /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent);
   const isTV = () => /MyFilmTV|Android TV|SmartTV|SMART-TV/i.test(navigator.userAgent);
   const isPlayerActive = () => Boolean(
     document.fullscreenElement ||
@@ -32,19 +29,9 @@ const MyFilmPWA = (() => {
     if (typeof dialog.showModal === 'function') dialog.showModal();
   }
 
-  async function promptInstall() {
-    if (!deferredPrompt) { showDialog(isIOS() ? 'ios' : 'pwa-help'); return false; }
-    deferredPrompt.prompt();
-    await deferredPrompt.userChoice;
-    deferredPrompt = null;
-    return true;
-  }
-
   function handleInstallButton() {
     if (isStandalone() || isTV()) return;
-    if (isTV() || !isMobile()) showDialog('tv');
-    else if (deferredPrompt) promptInstall();
-    else showDialog(isIOS() ? 'ios' : 'pwa-help');
+    showDialog('tv');
   }
 
   function showUpdate(registration) {
@@ -81,12 +68,10 @@ const MyFilmPWA = (() => {
   function init() {
     const open = document.getElementById('app-download-open');
     const close = document.getElementById('app-download-close');
-    const pwaInstall = document.getElementById('pwa-install-action');
     const tvDownload = document.getElementById('tv-download-action');
     if (tvDownload) tvDownload.href = TV_APK_URL;
     open?.addEventListener('click', event => { event.preventDefault(); handleInstallButton(); });
     close?.addEventListener('click', () => document.getElementById('app-download-dialog')?.close());
-    pwaInstall?.addEventListener('click', promptInstall);
     document.getElementById('app-download-dialog')?.addEventListener('click', event => {
       if (event.target === event.currentTarget) event.currentTarget.close();
     });
@@ -96,15 +81,9 @@ const MyFilmPWA = (() => {
 
   window.addEventListener('beforeinstallprompt', event => {
     event.preventDefault();
-    deferredPrompt = event;
-    document.getElementById('app-download-open')?.classList.add('install-ready');
-  });
-  window.addEventListener('appinstalled', () => {
-    deferredPrompt = null;
-    document.getElementById('app-download-open')?.setAttribute('hidden', '');
   });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init, { once: true });
   else init();
 
-  return { promptInstall, showDialog, tvApkUrl: TV_APK_URL };
+  return { showDialog, tvApkUrl: TV_APK_URL };
 })();
