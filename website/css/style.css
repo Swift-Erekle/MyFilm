@@ -1073,6 +1073,36 @@ footer {
 }
 .main-video::backdrop { background: #000; }
 
+/* Fullscreen the frame itself so Android WebView/TV and desktop browsers use
+   the exact same geometry. Without this, some WebView builds enlarge the
+   fullscreen surface while leaving the video at its inline 16:9 size. */
+.native-video-frame:fullscreen,
+.native-video-frame:-webkit-full-screen {
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  background: #000;
+  border-radius: 0;
+}
+.native-video-frame:fullscreen .main-video,
+.native-video-frame:-webkit-full-screen .main-video {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: none !important;
+  max-height: none !important;
+  aspect-ratio: auto !important;
+  object-fit: contain;
+  border-radius: 0;
+}
+.native-video-frame:fullscreen .player-fullscreen-hit,
+.native-video-frame:-webkit-full-screen .player-fullscreen-hit,
+.iframe-player-wrap:fullscreen .player-fullscreen-hit,
+.iframe-player-wrap:-webkit-full-screen .player-fullscreen-hit {
+  display: none;
+}
+.native-video-frame::backdrop { background: #000; }
+
 /* Invisible hit target over the player-provided fullscreen glyph. It makes
    the existing control reliable without drawing a second MyFilm button. */
 .player-fullscreen-hit {

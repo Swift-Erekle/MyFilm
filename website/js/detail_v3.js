@@ -9,6 +9,7 @@ const DetailView = (() => {
   let item           = null;
   let tmdbId         = null;
   let mediaType      = null;
+  let resolvedTmdbId  = null;
   let allSeasons     = [];
   let workerEpisodes = [];   // [{season, episode, streams}]
   let currentEpIdx   = 0;
@@ -37,6 +38,7 @@ const DetailView = (() => {
       allSeasons     = [];
       workerEpisodes = [];
       currentEpIdx   = 0;
+      resolvedTmdbId = null;
     }
 
     const view = document.getElementById('view-movie');
@@ -55,6 +57,7 @@ const DetailView = (() => {
       }
     }
 
+    resolvedTmdbId = realTmdbId;
     item = await API.detail(realTmdbId, type);
 
     // Override names with our exact animetv.ge matches if it's a custom anime!
@@ -206,7 +209,7 @@ const DetailView = (() => {
       title:     item.title || item.name || '',
       origTitle: item.original_title || item.original_name || '',
       year:      year,
-      tmdbId:    tmdbId,
+      tmdbId:    resolvedTmdbId || tmdbId,
       type:      mediaType,
       imdbId:    item.external_ids?.imdb_id || item.imdb_id || null,
       animetv_url: customObj ? customObj.animetv_url : null,

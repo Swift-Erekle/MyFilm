@@ -1,4 +1,4 @@
-const CACHE_VERSION = 'myfilm-shell-v1.1.4';
+const CACHE_VERSION = 'myfilm-shell-v1.1.5';
 const APP_SHELL = [
   '/',
   '/offline.html',

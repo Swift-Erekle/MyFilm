@@ -330,7 +330,10 @@ const Player = (() => {
     el.innerHTML = nativeHtml(streams, currentIdx);
     const video = el.querySelector('#main-video');
     const sel   = el.querySelector('#quality-select');
-    wireFullscreenHitTarget(el.querySelector('.native-video-frame'), video);
+    // Fullscreen the whole frame rather than the <video> itself. This is more
+    // reliable in Android WebView/TV apps and lets CSS size both native and
+    // embedded players consistently.
+    wireFullscreenHitTarget(el.querySelector('.native-video-frame'), el.querySelector('.native-video-frame'));
 
     let iframeWrap = document.createElement('div');
     iframeWrap.className = 'iframe-player-wrap';
