@@ -106,7 +106,8 @@ const SearchView = (() => {
        const n2 = (c.original_name || '').toLowerCase();
        return n1.includes(qLower) || n2.includes(qLower);
     }).map(c => ({
-       id: c.tmdb_id || c.id,
+       id: c.id,
+       tmdb_id: c.tmdb_id || null,
        title: c.name,
        name: c.name,
        original_name: c.original_name,
