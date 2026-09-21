@@ -73,7 +73,7 @@ const CONFIG = {
   ],
 
   ANIME_SECTIONS: [
-    { id: 'anime_trending', title: '🔥 ტრენდული დღეს',        endpoint: '/discover/tv?with_genres=16&with_original_language=ja&sort_by=trending.desc', media_type: 'tv' }, // Using popularity as proxy for trending in discover
+    { id: 'anime_trending', title: '🔥 ტრენდული დღეს',        endpoint: '/discover/tv?with_genres=16&with_original_language=ja&sort_by=popularity.desc', media_type: 'tv' }, // Using popularity as proxy for trending in discover
     { id: 'anime_popular',  title: '🌸 პოპულარული ანიმე',      endpoint: '/discover/tv?with_genres=16&with_original_language=ja&sort_by=popularity.desc', media_type: 'tv' },
     { id: 'anime_top',      title: '⭐ საუკეთესო ანიმე',       endpoint: '/discover/tv?with_genres=16&with_original_language=ja&sort_by=vote_average.desc&vote_count.gte=200', media_type: 'tv' },
     { id: 'anime_action',   title: '💥 ექშენ ანიმე',           endpoint: '/discover/tv?with_genres=16,10759&with_original_language=ja', media_type: 'tv' },
