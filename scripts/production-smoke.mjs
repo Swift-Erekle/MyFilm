@@ -168,21 +168,37 @@ async function main() {
   const iframe = tvPage.locator('.iframe-player-wrap iframe');
   if (await iframe.count()) {
     check((await iframe.first().getAttribute('tabindex')) === '-1', 'provider iframe is excluded from TV D-pad focus');
+  }
 
-    const hit = tvPage.locator('.player-fullscreen-hit--iframe').first();
-    if (await hit.count() && await hit.isVisible()) {
-      await hit.focus();
-      await tvPage.keyboard.press('Enter');
-      await tvPage.waitForTimeout(150);
-      check(await tvPage.evaluate(() => Boolean(document.fullscreenElement)), 'TV fullscreen action enters fullscreen');
-      const detailUrl = tvPage.url();
-      const handled = await tvPage.evaluate(() => window.MyFilmPlatform.handleBack());
-      check(handled === true, 'TV Back reports handled while fullscreen is active');
-      check(!(await tvPage.evaluate(() => Boolean(document.fullscreenElement))), 'TV Back exits fullscreen first');
-      check(tvPage.url() === detailUrl, 'TV fullscreen Back does not leave movie detail');
-    } else {
-      warnings.push({ type: 'fullscreen-hit-target-missing', route: '/movie/27205?tv=1' });
-    }
+  const fullscreenHit = playerState === 'iframe'
+    ? tvPage.locator('.player-fullscreen-hit--iframe').first()
+    : tvPage.locator('.native-video-frame [data-player-fullscreen-hit]').first();
+
+  if ((playerState === 'iframe' || playerState === 'native-video')
+    && await fullscreenHit.count() && await fullscreenHit.isVisible()) {
+    await fullscreenHit.focus();
+    await tvPage.keyboard.press('Enter');
+    await tvPage.waitForTimeout(150);
+    check(await tvPage.evaluate(() => Boolean(document.fullscreenElement)), 'TV rendered player enters fullscreen');
+    const detailUrl = tvPage.url();
+    const handled = await tvPage.evaluate(() => window.MyFilmPlatform.handleBack());
+    check(handled === true, 'TV Back reports handled while fullscreen is active');
+    check(!(await tvPage.evaluate(() => Boolean(document.fullscreenElement))), 'TV Back exits fullscreen first');
+    check(tvPage.url() === detailUrl, 'TV fullscreen Back does not leave movie detail');
+  } else if (playerState !== 'fallback') {
+    warnings.push({ type: 'fullscreen-hit-target-missing', playerState, route: '/movie/27205?tv=1' });
+  }
+
+  if (playerState === 'native-video') {
+    const nativeVideo = tvPage.locator('.native-video-frame video').first();
+    const videoState = await nativeVideo.evaluate(video => ({
+      src: video.currentSrc || video.src || '',
+      readyState: video.readyState,
+      networkState: video.networkState,
+      error: video.error ? { code: video.error.code, message: video.error.message || '' } : null,
+    }));
+    check(Boolean(videoState.src), 'TV native player has a media source', { videoState });
+    check(!videoState.error, 'TV native player has no immediate media error', { videoState });
   }
 
   await tvPage.screenshot({ path: path.join(OUT_DIR, 'tv-movie-detail.png'), fullPage: true });
@@ -191,6 +207,8 @@ async function main() {
   check(handledDetailBack === true, 'TV Back from movie detail is handled by web app');
   await tvPage.waitForURL(url => new URL(url).pathname === '/', { timeout: 10_000 });
   check(await tvPage.locator('#view-movie iframe').count() === 0, 'TV movie iframe is removed after leaving detail');
+  check(await tvPage.locator('#view-movie video').count() === 0, 'TV native video is removed after leaving detail');
+  check((await tvPage.locator('#player-container').innerHTML()).trim() === '', 'TV player container is empty after leaving detail');
 
   const seriesResponse = await tvPage.goto(BASE_URL + '/tv/125988?tv=1', { waitUntil: 'domcontentloaded', timeout: 45_000 });
   check(seriesResponse?.status() === 200, 'TV series detail returns HTTP 200', { status: seriesResponse?.status() });
@@ -199,12 +217,26 @@ async function main() {
   await burger.focus();
   await tvPage.keyboard.press('Enter');
   check(await tvPage.locator('#burger-panel').evaluate(el => el.classList.contains('open')), 'TV series menu opens with Enter');
+
+  await tvPage.waitForSelector('.burger-ep-btn', { state: 'visible', timeout: 30_000 });
+  const episodeButtons = tvPage.locator('.burger-ep-btn');
+  const episodeCount = await episodeButtons.count();
+  check(episodeCount > 0, 'TV series menu renders real episode buttons', { episodeCount });
   await tvPage.screenshot({ path: path.join(OUT_DIR, 'tv-series-menu.png'), fullPage: true });
 
+  const firstEpisode = episodeButtons.first();
+  await firstEpisode.focus();
+  await tvPage.keyboard.press('Enter');
+  check(!(await tvPage.locator('#burger-panel').evaluate(el => el.classList.contains('open'))), 'TV episode selection closes series menu');
+  check(await burger.evaluate(el => el === document.activeElement), 'TV focus returns to series menu trigger after episode selection');
+
+  await burger.focus();
+  await tvPage.keyboard.press('Enter');
+  check(await tvPage.locator('#burger-panel').evaluate(el => el.classList.contains('open')), 'TV series menu can reopen after episode selection');
   const handledPanelBack = await tvPage.evaluate(() => window.MyFilmPlatform.handleBack());
   check(handledPanelBack === true, 'TV Back handles open series menu');
   check(!(await tvPage.locator('#burger-panel').evaluate(el => el.classList.contains('open'))), 'TV Back closes series menu before leaving detail');
-  check(await burger.evaluate(el => el === document.activeElement), 'TV focus returns to series menu trigger after closing');
+  check(await burger.evaluate(el => el === document.activeElement), 'TV focus returns to series menu trigger after Back');
 
   const routeMessages = await tvPage.evaluate(() => window.__myfilmNativeMessages.filter(m => m?.type === 'MYFILM_NAVIGATION'));
   check(routeMessages.length > 0, 'TV web app reports SPA navigation to native shell', { count: routeMessages.length });
@@ -215,7 +247,10 @@ async function main() {
   check(await tvPage.evaluate(() => window.__myfilmNativeMessages.some(m => m?.type === 'MYFILM_BACK_RESULT' && m.handled === false)), 'TV root Back sends handled:false to native shell');
 
   if (tvErrors.length) warnings.push({ type: 'tv-pageerror', values: tvErrors });
-  if (tvFirstPartyFailures.length) warnings.push({ type: 'tv-first-party-request-failure', values: tvFirstPartyFailures });
+  const hardTvFailures = tvFirstPartyFailures.filter(item => !/ERR_ABORTED/i.test(item.error || ''));
+  const abortedTvRequests = tvFirstPartyFailures.length - hardTvFailures.length;
+  if (abortedTvRequests) note('TV route changes intentionally aborted in-flight first-party requests', { count: abortedTvRequests });
+  if (hardTvFailures.length) warnings.push({ type: 'tv-first-party-request-failure', values: hardTvFailures });
 
   await desktop.close();
   await tv.close();
