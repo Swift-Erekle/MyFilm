@@ -6,6 +6,12 @@ on:
     paths:
       - .github/workflows/production-smoke.yml
       - scripts/production-smoke.mjs
+      - server.js
+      - cloudflare.js
+      - src/**
+      - website/**
+      - package.json
+      - package-lock.json
   workflow_dispatch:
 
 permissions:

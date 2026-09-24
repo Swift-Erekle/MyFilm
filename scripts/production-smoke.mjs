@@ -195,6 +195,20 @@ async function main() {
   }
   note('TV movie player reached a rendered state', { playerState });
 
+  const deniedPlay = tvMediaResponses.find(item => {
+    try {
+      return new URL(item.url).pathname === '/play'
+        && item.status === 403
+        && /application\/json/i.test(item.contentType || '');
+    } catch {
+      return false;
+    }
+  });
+  check(!deniedPlay, 'TV /play proxy policy does not reject discovered media', {
+    deniedPlay: deniedPlay || null,
+    mediaResponses: tvMediaResponses.slice(-10),
+  });
+
   const iframe = tvPage.locator('.iframe-player-wrap iframe');
   if (await iframe.count()) {
     check((await iframe.first().getAttribute('tabindex')) === '-1', 'provider iframe is excluded from TV D-pad focus');
