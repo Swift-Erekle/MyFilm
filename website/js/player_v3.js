@@ -28,7 +28,13 @@ const Player = (() => {
     'ufasofilmebi.ge',
     'imovs.ge',
   ];
-  const PROVIDER_REQUEST_TIMEOUT = 22000;
+  const PROVIDER_REQUEST_TIMEOUT = 6000;
+  const PROVIDER_SEARCH_BUDGET = 7000;
+
+  function providerTimeout(deadline) {
+    const remaining = deadline - Date.now();
+    return remaining > 500 ? Math.min(PROVIDER_REQUEST_TIMEOUT, remaining) : 0;
+  }
   let currentInfo = null;
   let episodeLoadToken = 0;
   let providerHealthCache = { expiresAt: 0, byType: new Map() };
@@ -75,7 +81,7 @@ const Player = (() => {
         endpoint.searchParams.set('season', season);
         endpoint.searchParams.set('episode', episode);
       }
-      const response = await fetchWithTimeout(endpoint, { timeout: 9000 });
+      const response = await fetchWithTimeout(endpoint, { timeout: 6000 });
       const data = await response.json();
       const available = response.ok && data?.ok === true && data?.available === true;
       geMovieAvailabilityCache.set(cacheKey, available);
@@ -661,14 +667,17 @@ function hasCJK(str) {
     setStatus(`🔍 ${MOVIE_SCRAPERS.length} ქართულ წყაროზე ძიება...`);
 
     const found = await Promise.all(MOVIE_SCRAPERS.map(async provider => {
+      const deadline = Date.now() + PROVIDER_SEARCH_BUDGET;
       for (const q of queries) {
+        const timeout = providerTimeout(deadline);
+        if (!timeout) break;
         try {
           const endpoint = new URL(`${WORKER}/imovs`);
           endpoint.searchParams.set('q', q);
           if (info.year) endpoint.searchParams.set('year', info.year);
           endpoint.searchParams.set('eng', englishTitle);
           endpoint.searchParams.set('source', provider);
-          const response = await fetchWithTimeout(endpoint, { timeout: PROVIDER_REQUEST_TIMEOUT });
+          const response = await fetchWithTimeout(endpoint, { timeout });
           if (!response.ok) continue;
           const data = await response.json();
           const player = data?.players?.find(candidate => candidate.source?.toLowerCase() === provider.toLowerCase())
@@ -713,7 +722,10 @@ function hasCJK(str) {
     setStatus(`🔍 ${scraperIds.length} ქართულ წყაროზე ძიება...`);
 
     const groups = await Promise.all(scraperIds.map(async provider => {
+      const deadline = Date.now() + PROVIDER_SEARCH_BUDGET;
       for (const q of queries) {
+        const timeout = providerTimeout(deadline);
+        if (!timeout) break;
         try {
           let endpoint;
           if (provider === 'animeb.ge') {
@@ -727,7 +739,7 @@ function hasCJK(str) {
           }
           endpoint.searchParams.set('q', q);
           if (info.year) endpoint.searchParams.set('year', info.year);
-          const response = await fetchWithTimeout(endpoint, { timeout: PROVIDER_REQUEST_TIMEOUT });
+          const response = await fetchWithTimeout(endpoint, { timeout });
           if (!response.ok) continue;
           const data = await response.json();
           if (!data?.episodes?.length) continue;
@@ -772,7 +784,10 @@ function hasCJK(str) {
     const queries = buildQueries(currentInfo || {});
     const englishTitle = cleanSeriesTitle(currentInfo?.origTitle || currentInfo?.title || '');
     const discovered = await Promise.all(missingProviders.map(async provider => {
+      const deadline = Date.now() + PROVIDER_SEARCH_BUDGET;
       for (const q of queries) {
+        const timeout = providerTimeout(deadline);
+        if (!timeout) break;
         try {
           const endpoint = new URL(`${WORKER}/imovs-series`);
           endpoint.searchParams.set('q', q);
@@ -780,7 +795,7 @@ function hasCJK(str) {
           endpoint.searchParams.set('source', provider);
           endpoint.searchParams.set('season', episodeInfo.season);
           endpoint.searchParams.set('episode', episodeInfo.episode);
-          const response = await fetchWithTimeout(endpoint, { timeout: PROVIDER_REQUEST_TIMEOUT });
+          const response = await fetchWithTimeout(endpoint, { timeout });
           if (!response.ok) continue;
           const data = await response.json();
           const episode = data?.episodes?.find(candidate =>
