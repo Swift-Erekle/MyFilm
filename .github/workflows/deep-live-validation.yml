@@ -1,0 +1,28 @@
+name: Deep live validation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/deep-live-validation.yml
+
+permissions:
+  contents: read
+
+jobs:
+  live-providers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22.13
+          cache: npm
+      - run: npm ci
+      - name: Live provider diagnostics
+        run: npm run diagnose:providers
+      - name: Live scraper canaries
+        env:
+          RUN_LIVE_SCRAPER_TESTS: '1'
+        run: npm run test:live
