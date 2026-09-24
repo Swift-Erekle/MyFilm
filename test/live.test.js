@@ -77,21 +77,34 @@ test('live: movie provider pool keeps at least two independent playable sources'
   assert.ok(working.length >= 2, `movie provider redundancy too low: ${working.length}/${results.length} working`);
 });
 
-test('live: series provider pool keeps at least one playable Silo source', { skip: !runLive, timeout: 120_000 }, async () => {
-  const providers = ['adjaranetto.com', 'Croconet.cam', 'ufasofilmebi.ge', 'imovs.ge'];
+test('live: Silo S1E1 has at least one playable Georgian source', { skip: !runLive, timeout: 150_000 }, async () => {
   const results = [];
+
+  try {
+    const geMovie = await workerJson('/api/ge-movie/status?type=tv&id=125988&season=1&episode=1');
+    results.push({
+      provider: 'ge.movie',
+      ok: geMovie?.ok === true && geMovie?.available === true,
+      error: geMovie?.available ? undefined : 'ge.movie did not report Silo S1E1 as available',
+    });
+  } catch (error) {
+    results.push({ provider: 'ge.movie', ok: false, error: error instanceof Error ? error.message : String(error) });
+  }
+
+  const providers = ['adjaranetto.com', 'Croconet.cam', 'ufasofilmebi.ge', 'imovs.ge'];
   for (const provider of providers) {
     try {
       const data = await workerJson(`/imovs-series?q=Silo&eng=Silo&source=${encodeURIComponent(provider)}&season=1&episode=1`);
       const stream = data.episodes?.flatMap(episode => episode.streams || []).find(candidate => candidate.file || candidate.rawUrl);
       assert.ok(stream, `${provider} did not return Silo S1E1`);
+      await assertReachableStream(stream, provider);
       results.push({ provider, ok: true });
     } catch (error) {
       results.push({ provider, ok: false, error: error instanceof Error ? error.message : String(error) });
     }
   }
   console.log(JSON.stringify({ liveSeriesProviders: results }));
-  assert.ok(results.some(result => result.ok), 'no live Silo series provider returned episode 1');
+  assert.ok(results.some(result => result.ok), 'no live Georgian source returned Silo S1E1');
 });
 
 test('live: at least one anime provider returns Jujutsu Kaisen episodes', { skip: !runLive, timeout: 120_000 }, async () => {

@@ -191,7 +191,7 @@ test('PWA service worker installs and caches the static app shell', async ({ bro
     return { scope: registration.scope, cacheNames, cachedUrls };
   });
   expect(result.scope).toBe('http://127.0.0.1:8094/');
-  expect(result.cacheNames).toContain('myfilm-shell-v1.1.7');
+  expect(result.cacheNames).toContain('myfilm-shell-v1.1.8');
   expect(result.cachedUrls).toContain('/offline.html');
   expect(result.cachedUrls.some(path => /^\/(?:api|imovs|play|hls)/.test(path))).toBe(false);
   await context.close();
@@ -327,7 +327,7 @@ test('TV player focus targets include iframe and fullscreen hit target', async (
   await mockApplicationApi(page);
   await page.goto('/movie/27205');
   const iframe = page.locator('.iframe-player-wrap iframe');
-  const fullscreenHit = page.locator('[data-player-fullscreen-hit]');
+  const fullscreenHit = page.locator('.player-fullscreen-hit--iframe');
   await expect(iframe).toBeVisible();
   await expect.poll(() => iframe.evaluate(element => element.tabIndex)).toBe(0);
   await expect.poll(() => fullscreenHit.evaluate(element => element.tabIndex)).toBe(0);
@@ -362,7 +362,7 @@ test('TV fullscreen bridge enters fullscreen and Back exits it without leaving d
   });
   await mockApplicationApi(page);
   await page.goto('/movie/27205');
-  const hit = page.locator('[data-player-fullscreen-hit]');
+  const hit = page.locator('.player-fullscreen-hit--iframe');
   await expect(hit).toBeVisible();
   await hit.focus();
   await page.keyboard.press('Enter');

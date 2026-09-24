@@ -218,6 +218,44 @@ const Player = (() => {
     return merged;
   }
 
+  function mergeWithTmdbEpisodeSkeleton(episodes, seasons) {
+    const episodeMap = new Map();
+    for (const episode of episodes || []) {
+      const season = Number(episode.season) || 1;
+      const episodeNumber = Number(episode.episode) || 1;
+      episodeMap.set(`${season}-${episodeNumber}`, {
+        ...episode,
+        season,
+        episode: episodeNumber,
+        streams: realStreams(episode.streams),
+      });
+    }
+
+    for (const seasonInfo of seasons || []) {
+      const season = Number(seasonInfo?.season_number ?? seasonInfo?.season);
+      const episodeCount = Number(seasonInfo?.episode_count || 0);
+      if (!Number.isInteger(season) || season < 1 || !Number.isInteger(episodeCount) || episodeCount < 1) continue;
+      for (let episodeNumber = 1; episodeNumber <= episodeCount; episodeNumber += 1) {
+        const key = `${season}-${episodeNumber}`;
+        if (episodeMap.has(key)) continue;
+        episodeMap.set(key, {
+          season,
+          episode: episodeNumber,
+          playerIndex: 1,
+          title: `S${season} / ეპიზოდი ${episodeNumber}`,
+          streams: [],
+          source: 'tmdb',
+          isPlaceholderEpisode: true,
+        });
+      }
+    }
+
+    const merged = [...episodeMap.values()]
+      .sort((a, b) => a.season - b.season || a.episode - b.episode);
+    if (episodes?.overview) merged.overview = episodes.overview;
+    return merged;
+  }
+
   function htmlEscape(value) {
     return String(value || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
@@ -335,6 +373,7 @@ const Player = (() => {
 
     el.innerHTML = nativeHtml(streams, currentIdx);
     const video = el.querySelector('#main-video');
+    const nativeFrame = el.querySelector('.native-video-frame');
     const sel   = el.querySelector('#quality-select');
     // Fullscreen the whole frame rather than the <video> itself. This is more
     // reliable in Android WebView/TV apps and lets CSS size both native and
@@ -353,6 +392,7 @@ const Player = (() => {
       
       // On-demand search for placeholder streams!
       if (stream.isPlaceholder) {
+        nativeFrame.style.display = 'none';
         video.style.display = 'none';
         video.pause();
         destroyHls();
@@ -425,6 +465,7 @@ const Player = (() => {
       const isIframe = stream.isIframe !== undefined ? stream.isIframe : (!/\.(mp4|m3u8)$/i.test(stream.rawUrl || '') && !(stream.rawUrl || '').includes('/proxy'));
       
       if (isIframe) {
+        nativeFrame.style.display = 'none';
         video.style.display = 'none';
         video.pause();
         destroyHls();
@@ -433,6 +474,7 @@ const Player = (() => {
       } else {
         iframeWrap.style.display = 'none';
         iframeWrap.innerHTML = '';
+        nativeFrame.style.display = '';
         video.style.display = 'block';
         await attachStream(video, stream.file);
       }
@@ -770,7 +812,8 @@ function hasCJK(str) {
       });
     }
 
-    return mergeEpisodeGroups([result]);
+    result = mergeEpisodeGroups([result]);
+    return mergeWithTmdbEpisodeSkeleton(result, info.seasons);
   }
 
   async function discoverEpisodeStreams(episodeInfo, existingStreams) {

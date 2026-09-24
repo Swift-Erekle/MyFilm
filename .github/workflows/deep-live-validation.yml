@@ -1,11 +1,17 @@
 name: Deep live validation
-# Re-run after provider-budget hardening.
 
 on:
+  workflow_dispatch:
   push:
     branches: [main]
     paths:
       - .github/workflows/deep-live-validation.yml
+      - cloudflare.js
+      - src/providers/**
+      - scripts/provider-diagnostics.js
+      - scripts/run-live-tests.js
+      - test/live.test.js
+      - website/js/player_v3.js
 
 permissions:
   contents: read

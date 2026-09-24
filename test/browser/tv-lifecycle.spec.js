@@ -93,7 +93,7 @@ async function installNativeBridgeAndFullscreenMock(page) {
   });
 }
 
-async function mockLifecycleApi(page) {
+async function mockLifecycleApi(page, { seriesProvidersAvailable = true } = {}) {
   const providerDocument = route => route.fulfill({
     status: 200,
     contentType: 'text/html',
@@ -143,7 +143,7 @@ async function mockLifecycleApi(page) {
   await page.route('**/imovs-series?**', route => {
     const url = new URL(route.request().url());
     const source = url.searchParams.get('source');
-    const available = ['adjaranetto.com', 'imovs.ge', 'Croconet.cam'].includes(source);
+    const available = seriesProvidersAvailable && ['adjaranetto.com', 'imovs.ge', 'Croconet.cam'].includes(source);
     const rawUrl = source === 'Croconet.cam'
       ? 'https://croconet.cam/embed/silo-s1e1'
       : `https://${source}/embed/silo-s1e1`;
@@ -276,4 +276,18 @@ test('TV fullscreen opens on the player and Back exits fullscreen without leavin
   const messages = await page.evaluate(() => window.__myfilmNativeMessages);
   expect(messages.some(message => message?.type === 'MYFILM_FULLSCREEN' && message.active === false)).toBe(true);
   expect(messages.some(message => message?.type === 'MYFILM_BACK_RESULT' && message.handled === true)).toBe(true);
+});
+
+
+test('TMDB episode skeleton keeps the series menu usable when external series providers are down', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV resilience behavior');
+  await mockLifecycleApi(page, { seriesProvidersAvailable: false });
+  await page.goto('/tv/125988');
+
+  await expect(page.locator('.detail-title')).toHaveText('Silo');
+  await expect(page.locator('.burger-ep-btn')).toHaveCount(1);
+  await expect(page.locator('#now-playing-label')).toContainText('სეზონი 1');
+  await expect(page.locator('.iframe-badge')).toContainText('ge.movie');
+  await expect(page.locator('.native-video-frame')).toBeHidden();
+  await expect(page.locator('.player-fullscreen-hit--iframe')).toHaveCount(1);
 });
