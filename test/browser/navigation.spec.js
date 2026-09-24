@@ -424,11 +424,15 @@ test('TV vertical navigation can escape a movie-card row to controls above it', 
 });
 
 
-test('TV detail initial focus lands on the primary Watch action instead of similar cards', async ({ page }, testInfo) => {
+test('TV detail primary Watch action is reachable from the top navigation with D-pad', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'tv', 'TV-only focus behavior');
   await mockApplicationApi(page);
   await page.goto('/movie/27205');
 
-  await expect(page.locator('#btn-scroll-player')).toBeVisible();
-  await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('btn-scroll-player');
+  const home = page.locator('#nav-home');
+  const watch = page.locator('#btn-scroll-player');
+  await expect(watch).toBeVisible();
+  await home.focus();
+  await page.keyboard.press('ArrowDown');
+  await expect(watch).toBeFocused();
 });

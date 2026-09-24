@@ -94,7 +94,6 @@ const MyFilmTVNavigation = (() => {
     preparePlayerFocusTargets();
     document.addEventListener('keydown', onKeyDown, true);
     window.addEventListener('myfilm:navigation', () => requestAnimationFrame(() => focusInitial(true)));
-    window.addEventListener('myfilm:content-ready', () => requestAnimationFrame(() => focusInitial(true)));
     new MutationObserver(() => {
       preparePlayerFocusTargets();
       if (!isValidFocusTarget(document.activeElement)) requestAnimationFrame(focusInitial);
