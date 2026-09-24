@@ -485,3 +485,29 @@ test('a newer detail navigation cannot be overwritten by an older slow detail re
   await expect(page).toHaveURL(/\/movie\/603$/);
   await expect(page.locator('.detail-title')).toHaveText('The Matrix');
 });
+
+
+test('TV bridge reports SPA route changes to the native shell', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV native route synchronization');
+  await installNativeBridgeAndFullscreenMock(page);
+  await mockLifecycleApi(page);
+  await page.goto('/');
+
+  await page.evaluate(() => Router.go('/movie/27205'));
+  await expect(page).toHaveURL(/\/movie\/27205$/);
+  await expect.poll(() => page.evaluate(() =>
+    window.__myfilmNativeMessages.some(message =>
+      message?.type === 'MYFILM_NAVIGATION'
+      && new URL(message.url).pathname === '/movie/27205'
+    )
+  )).toBe(true);
+
+  await page.evaluate(() => MyFilmPlatform.handleBack());
+  await expect(page).toHaveURL(/\/$/);
+  await expect.poll(() => page.evaluate(() =>
+    window.__myfilmNativeMessages.some(message =>
+      message?.type === 'MYFILM_NAVIGATION'
+      && new URL(message.url).pathname === '/'
+    )
+  )).toBe(true);
+});

@@ -14,6 +14,10 @@ const MyFilmPlatform = (() => {
     window.dispatchEvent(new CustomEvent('myfilm:fullscreen', { detail: { active } }));
   }
 
+  function reportNavigation() {
+    post('MYFILM_NAVIGATION', { url: window.location.href });
+  }
+
   async function exit() {
     try {
       if (document.fullscreenElement && document.exitFullscreen) await document.exitFullscreen();
@@ -47,6 +51,8 @@ const MyFilmPlatform = (() => {
     post('MYFILM_BACK_RESULT', { handled: false });
     return false;
   }
+
+  window.addEventListener('myfilm:navigation', reportNavigation);
 
   document.addEventListener('fullscreenchange', () => {
     const active = Boolean(document.fullscreenElement);
