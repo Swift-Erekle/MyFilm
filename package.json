@@ -15,7 +15,7 @@
     "worker:dry-run": "wrangler deploy --dry-run"
   },
   "engines": {
-    "node": ">=18.0.0"
+    "node": ">=22.13.0"
   },
   "dependencies": {
     "dotenv": "^17.4.2",

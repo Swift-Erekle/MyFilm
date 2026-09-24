@@ -168,7 +168,7 @@ test('install dialog always offers the Android TV APK', async ({ page }, testInf
   await expect(page.locator('[data-install-panel="pwa-help"]')).toHaveCount(0);
   await expect(page.locator('[data-install-panel="ios"]')).toHaveCount(0);
   await expect(page.locator('#tv-download-action')).toBeVisible();
-  await expect(page.locator('#tv-download-action')).toHaveAttribute('href', /v1\.1\.0\/MyFilm-TV\.apk$/);
+  await expect(page.locator('#tv-download-action')).toHaveAttribute('href', /Swift-Erekle\/MyFilm-App\/releases\/download\/v1\.1\.0\/MyFilm-TV\.apk$/);
   await page.keyboard.press('Escape');
   await expect(page.locator('#app-download-dialog')).not.toBeVisible();
 });
@@ -191,7 +191,7 @@ test('PWA service worker installs and caches the static app shell', async ({ bro
     return { scope: registration.scope, cacheNames, cachedUrls };
   });
   expect(result.scope).toBe('http://127.0.0.1:8094/');
-  expect(result.cacheNames).toContain('myfilm-shell-v1.1.5');
+  expect(result.cacheNames).toContain('myfilm-shell-v1.1.6');
   expect(result.cachedUrls).toContain('/offline.html');
   expect(result.cachedUrls.some(path => /^\/(?:api|imovs|play|hls)/.test(path))).toBe(false);
   await context.close();

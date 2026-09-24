@@ -1,5 +1,5 @@
 const MyFilmPWA = (() => {
-  const TV_APK_URL = 'https://github.com/Swift-Erekle/MyFilm/releases/download/v1.1.0/MyFilm-TV.apk';
+  const TV_APK_URL = 'https://github.com/Swift-Erekle/MyFilm-App/releases/download/v1.1.0/MyFilm-TV.apk';
   let reloadRequested = false;
   let reloadPending = false;
 
