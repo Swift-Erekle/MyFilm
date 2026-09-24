@@ -252,6 +252,9 @@ const DetailView = (() => {
     window.dispatchEvent(new CustomEvent('myfilm:content-ready', {
       detail: { view: 'movie', id: String(tmdbId || '') },
     }));
+    if (window.MyFilmTVNavigation?.enabled) {
+      requestAnimationFrame(() => window.MyFilmTVNavigation?.focusInitial?.(true));
+    }
   }
 
   // ---- NOW PLAYING LABEL ----
