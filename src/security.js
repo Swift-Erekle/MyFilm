@@ -4,7 +4,7 @@ const ALLOWED_PROXY_HOSTS = [
   'animeb.ge', 'animetv.ge', 'csst.online', 'ok.ru', 'vkvideo.ru', 'vk.com', 'sibnet.ru', 'video.sibnet.ru',
   'mail.ru', 'my.mail.ru', 'videoapi.my.mail.ru', 'stormo.online', 'secvideo.online', 'drive.google.com',
   'googleusercontent.com', 'googlevideo.com', 'incvideo.com', 'incvideo1.online', 'incvideo.online', 'fmovie-core', 'allarknow.online',
-  'vidsrc-embed.ru', 'vsembed.ru', 'vidsrc.me', 'rumble.com',
+  'vidsrc-embed.ru', 'vsembed.ru', 'vidsrc.me', 'rumble.com', 'content.jwplatform.com',
 ];
 
 function isPrivateHostname(hostname) {

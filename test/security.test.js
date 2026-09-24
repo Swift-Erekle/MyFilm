@@ -11,5 +11,7 @@ test('proxy rejects local, private and plain HTTP targets', () => {
 
 test('proxy permits an allowlisted HTTPS media host', () => {
   assert.equal(isAllowedProxyUrl('https://storage.croco.cam/movies/demo/index.m3u8'), true);
+  assert.equal(isAllowedProxyUrl('https://content.jwplatform.com/videos/demo.mp4'), true);
+  assert.equal(isAllowedProxyUrl('https://jwplatform.com/videos/demo.mp4'), false);
   assert.equal(isAllowedProxyUrl('https://evil.example/file.m3u8'), false);
 });
