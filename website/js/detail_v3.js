@@ -277,6 +277,7 @@ const DetailView = (() => {
     closeBtn?.addEventListener('click', e => {
       e.stopPropagation();
       panel.classList.remove('open');
+      trigger?.focus({ preventScroll: true });
     });
     outsideClickHandler = e => {
       if (!document.getElementById('burger-overlay')?.contains(e.target)) {
@@ -369,6 +370,7 @@ const DetailView = (() => {
           Player.loadEpisode('player-container', ep.streams, playNext, ep);
           updateNowPlaying(ep._idx);
           document.getElementById('burger-panel')?.classList.remove('open');
+          document.getElementById('burger-trigger')?.focus({ preventScroll: true });
           
           if (e) {
             document.getElementById('player-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });

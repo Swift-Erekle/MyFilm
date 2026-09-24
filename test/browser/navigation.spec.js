@@ -309,6 +309,7 @@ test('TV series burger opens, closes with Back, and episode selection closes it'
   const beforeBack = page.url();
   await page.evaluate(() => MyFilmPlatform.handleBack());
   await expect(page.locator('#burger-panel')).not.toHaveClass(/open/);
+  await expect(trigger).toBeFocused();
   expect(page.url()).toBe(beforeBack);
 
   await trigger.focus();
@@ -319,6 +320,7 @@ test('TV series burger opens, closes with Back, and episode selection closes it'
   await episode.focus();
   await page.keyboard.press('Enter');
   await expect(page.locator('#burger-panel')).not.toHaveClass(/open/);
+  await expect(trigger).toBeFocused();
   await expect(page.locator('#now-playing-label')).toContainText('სეზონი 1');
 });
 
