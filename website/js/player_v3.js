@@ -36,7 +36,12 @@ const Player = (() => {
     return remaining > 500 ? Math.min(PROVIDER_REQUEST_TIMEOUT, remaining) : 0;
   }
   let currentInfo = null;
+  let playerSessionToken = 0;
   let episodeLoadToken = 0;
+
+  function isCurrentSession(token, element) {
+    return token === playerSessionToken && (!element || element.isConnected);
+  }
   let providerHealthCache = { expiresAt: 0, byType: new Map() };
   const geMovieAvailabilityCache = new Map();
 
@@ -816,16 +821,16 @@ function hasCJK(str) {
     return mergeWithTmdbEpisodeSkeleton(result, info.seasons);
   }
 
-  async function discoverEpisodeStreams(episodeInfo, existingStreams) {
-    if (!episodeInfo || currentInfo?.animetv_url) return realStreams(existingStreams);
+  async function discoverEpisodeStreams(episodeInfo, existingStreams, info = currentInfo) {
+    if (!episodeInfo || info?.animetv_url) return realStreams(existingStreams);
 
-    const geMoviePromise = hasGeMovie(currentInfo, episodeInfo);
+    const geMoviePromise = hasGeMovie(info, episodeInfo);
     const existing = realStreams(existingStreams).filter(stream => String(stream.source || stream.label || '').toLowerCase() !== 'ge.movie');
     const existingProviders = new Set(existing.map(stream => String(stream.source || stream.label || '').toLowerCase()));
     const missingProviders = SERIES_SCRAPERS.filter(provider => !existingProviders.has(provider.toLowerCase()));
 
-    const queries = buildQueries(currentInfo || {});
-    const englishTitle = cleanSeriesTitle(currentInfo?.origTitle || currentInfo?.title || '');
+    const queries = buildQueries(info || {});
+    const englishTitle = cleanSeriesTitle(info?.origTitle || info?.title || '');
     const discovered = await Promise.all(missingProviders.map(async provider => {
       const deadline = Date.now() + PROVIDER_SEARCH_BUDGET;
       for (const q of queries) {
@@ -854,9 +859,9 @@ function hasCJK(str) {
     }));
 
     const geMovieAvailable = await geMoviePromise;
-    currentInfo.geMovieAvailable = geMovieAvailable;
+    if (currentInfo === info) info.geMovieAvailable = geMovieAvailable;
     const streams = realStreams([
-      ...(geMovieAvailable ? [buildGeMovieStream(currentInfo, episodeInfo)] : []),
+      ...(geMovieAvailable ? [buildGeMovieStream(info, episodeInfo)] : []),
       ...existing,
       ...discovered.filter(Boolean),
     ]);
@@ -871,12 +876,15 @@ function hasCJK(str) {
   async function loadMovie(containerId, info) {
     const el = document.getElementById(containerId);
     if (!el) return;
+    const sessionToken = ++playerSessionToken;
+    episodeLoadToken += 1;
     currentInfo = info;
 
     const isCustom = info.is_custom || !info.tmdbId;
     if (isCustom) {
       el.innerHTML = loadingHtml('წყაროების ჩატვირთვა...');
       const players = await tryWorkerMovie(info);
+      if (!isCurrentSession(sessionToken, el)) return;
       if (players?.length) {
         await renderNative(el, players[0].streams, null);
       } else {
@@ -887,6 +895,7 @@ function hasCJK(str) {
 
     el.innerHTML = loadingHtml('წყაროები იტვირთება...');
     const players = await tryWorkerMovie(info);
+    if (!isCurrentSession(sessionToken, el)) return;
     if (players?.length && players[0].streams?.length) {
       await renderNative(el, players[0].streams, null);
     } else {
@@ -897,17 +906,21 @@ function hasCJK(str) {
   async function loadSeries(containerId, info, onReady) {
     const el = document.getElementById(containerId);
     if (!el) return null;
+    const sessionToken = ++playerSessionToken;
+    episodeLoadToken += 1;
     currentInfo = info;
 
     const isCustom = info.animetv_url || !info.tmdbId;
     if (isCustom) {
       el.innerHTML = loadingHtml('🔍 სერიების ძიება...');
       const episodes = await tryWorkerSeries(info);
+      if (!isCurrentSession(sessionToken, el)) return null;
       if (episodes?.length) {
         if (onReady) onReady(episodes);
         return { type: 'worker', episodes };
       }
       info.geMovieAvailable = await hasGeMovie(info, { season: 1, episode: 1 });
+      if (!isCurrentSession(sessionToken, el)) return null;
       showFallback(el, info, 'tv');
       return null;
     }
@@ -915,6 +928,7 @@ function hasCJK(str) {
     if (info.seasons && onReady) {
       el.innerHTML = loadingHtml('წყაროები იტვირთება...');
       const episodes = await tryWorkerSeries(info);
+      if (!isCurrentSession(sessionToken, el)) return null;
       if (episodes?.length) {
         onReady(episodes);
         return { type: 'worker', episodes };
@@ -922,6 +936,7 @@ function hasCJK(str) {
     }
 
     info.geMovieAvailable = await hasGeMovie(info, { season: 1, episode: 1 });
+    if (!isCurrentSession(sessionToken, el)) return null;
     showFallback(el, info, 'tv');
     return null;
   }
@@ -930,15 +945,19 @@ function hasCJK(str) {
   async function loadEpisode(containerId, streams, onErrorFallback, episodeInfo) {
     const el = document.getElementById(containerId);
     if (!el) return;
+    const sessionToken = playerSessionToken;
+    const info = currentInfo;
     const loadToken = ++episodeLoadToken;
     el.innerHTML = loadingHtml('ქართული წყაროები მოწმდება...');
-    const discovered = await discoverEpisodeStreams(episodeInfo, streams);
-    if (loadToken !== episodeLoadToken) return;
+    const discovered = await discoverEpisodeStreams(episodeInfo, streams, info);
+    if (loadToken !== episodeLoadToken || !isCurrentSession(sessionToken, el) || currentInfo !== info) return;
     await renderNative(el, discovered, onErrorFallback);
   }
 
   function destroy() {
+    playerSessionToken += 1;
     episodeLoadToken += 1;
+    currentInfo = null;
     destroyHls();
     const v = document.getElementById('main-video');
     if (v) { v.pause(); v.removeAttribute('src'); v.load(); }

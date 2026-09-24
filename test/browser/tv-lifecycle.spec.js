@@ -291,3 +291,80 @@ test('TMDB episode skeleton keeps the series menu usable when external series pr
   await expect(page.locator('.native-video-frame')).toBeHidden();
   await expect(page.locator('.player-fullscreen-hit--iframe')).toHaveCount(1);
 });
+
+
+test('closing detail cancels a late movie player load before any iframe is mounted', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV lifecycle cancellation');
+  const providerDocuments = [];
+  page.on('request', request => {
+    if (request.resourceType() === 'document' && /(?:em\.filmx\.my|imovs\.ge)/.test(request.url())) {
+      providerDocuments.push(request.url());
+    }
+  });
+
+  await mockLifecycleApi(page);
+  await page.unroute('**/api/ge-movie/status**');
+  await page.route('**/api/ge-movie/status**', async route => {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true, available: true, provider: 'ge.movie' }),
+    });
+  });
+  await page.unroute('**/imovs?**');
+  await page.route('**/imovs?**', async route => {
+    await new Promise(resolve => setTimeout(resolve, 500));
+    const source = new URL(route.request().url()).searchParams.get('source');
+    const available = source === 'imovs.ge';
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: available,
+        players: available ? [{
+          source,
+          streams: [{
+            label: source,
+            source,
+            file: `https://myfilm.example/play?u=${encodeURIComponent('https://imovs.ge/embed/inception')}`,
+            rawUrl: 'https://imovs.ge/embed/inception',
+            isIframe: true,
+          }],
+        }] : [],
+      }),
+    });
+  });
+
+  await page.goto('/');
+  await page.evaluate(() => Router.go('/movie/27205'));
+  await expect(page).toHaveURL(/\/movie\/27205$/);
+  await page.evaluate(() => Router.go('/'));
+  await expect(page).toHaveURL(/\/$/);
+
+  await page.waitForTimeout(1200);
+  await expect(page.locator('#player-container')).toBeEmpty();
+  expect(providerDocuments).toEqual([]);
+});
+
+test('switching details prevents an older episode discovery from mutating the new player session', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV lifecycle cancellation');
+  await mockLifecycleApi(page);
+  await page.unroute('**/imovs-series?**');
+  await page.route('**/imovs-series?**', async route => {
+    await new Promise(resolve => setTimeout(resolve, 450));
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: false, episodes: [] }),
+    });
+  });
+
+  await page.goto('/');
+  await page.evaluate(() => Router.go('/tv/125988'));
+  await expect(page).toHaveURL(/\/tv\/125988$/);
+  await page.evaluate(() => Router.go('/movie/27205'));
+  await expect(page).toHaveURL(/\/movie\/27205$/);
+  await expect(page.locator('.detail-title')).toHaveText('Inception');
+
+  await page.waitForTimeout(1200);
+  await expect(page.locator('.detail-title')).toHaveText('Inception');
+  await expect(page.locator('#burger-panel')).toHaveCount(0);
+});
