@@ -191,7 +191,7 @@ test('PWA service worker installs and caches the static app shell', async ({ bro
     return { scope: registration.scope, cacheNames, cachedUrls };
   });
   expect(result.scope).toBe('http://127.0.0.1:8094/');
-  expect(result.cacheNames).toContain('myfilm-shell-v1.1.6');
+  expect(result.cacheNames).toContain('myfilm-shell-v1.1.7');
   expect(result.cachedUrls).toContain('/offline.html');
   expect(result.cachedUrls.some(path => /^\/(?:api|imovs|play|hls)/.test(path))).toBe(false);
   await context.close();
@@ -279,4 +279,117 @@ test('search query renders results without a stale async response', async ({ pag
   await expect(page.locator('#search-input')).toHaveValue('Inception');
   await expect(page.locator('.movie-card').first()).toBeVisible();
   await expect(page.locator('#search-info')).toContainText('Inception');
+});
+
+
+test('TV starts with a real focus target instead of document.body', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV-only behavior');
+  await mockApplicationApi(page);
+  await page.goto('/');
+  await expect.poll(() => page.evaluate(() => {
+    const active = document.activeElement;
+    return active && active !== document.body && active !== document.documentElement
+      && typeof active.matches === 'function'
+      && active.matches('a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),[role="link"],[tabindex]:not([tabindex="-1"])');
+  })).toBe(true);
+});
+
+test('TV series burger opens, closes with Back, and episode selection closes it', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV-only behavior');
+  await mockApplicationApi(page);
+  await page.goto('/tv/125988');
+  await expect(page.locator('.detail-title')).toHaveText('Silo');
+
+  const trigger = page.locator('#burger-trigger');
+  await expect(trigger).toBeVisible();
+  await trigger.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#burger-panel')).toHaveClass(/open/);
+
+  const beforeBack = page.url();
+  await page.evaluate(() => MyFilmPlatform.handleBack());
+  await expect(page.locator('#burger-panel')).not.toHaveClass(/open/);
+  expect(page.url()).toBe(beforeBack);
+
+  await trigger.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#burger-panel')).toHaveClass(/open/);
+  const episode = page.locator('.burger-ep-btn').first();
+  await expect(episode).toBeVisible();
+  await episode.focus();
+  await page.keyboard.press('Enter');
+  await expect(page.locator('#burger-panel')).not.toHaveClass(/open/);
+  await expect(page.locator('#now-playing-label')).toContainText('სეზონი 1');
+});
+
+test('TV player focus targets include iframe and fullscreen hit target', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV-only behavior');
+  await mockApplicationApi(page);
+  await page.goto('/movie/27205');
+  const iframe = page.locator('.iframe-player-wrap iframe');
+  const fullscreenHit = page.locator('[data-player-fullscreen-hit]');
+  await expect(iframe).toBeVisible();
+  await expect.poll(() => iframe.evaluate(element => element.tabIndex)).toBe(0);
+  await expect.poll(() => fullscreenHit.evaluate(element => element.tabIndex)).toBe(0);
+  await fullscreenHit.focus();
+  await expect(fullscreenHit).toBeFocused();
+});
+
+test('TV fullscreen bridge enters fullscreen and Back exits it without leaving detail', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV-only behavior');
+  await page.addInitScript(() => {
+    window.__nativeBridgeMessages = [];
+    window.ReactNativeWebView = {
+      postMessage(value) {
+        try { window.__nativeBridgeMessages.push(JSON.parse(value)); } catch {}
+      },
+    };
+    let fullscreenTarget = null;
+    Object.defineProperty(document, 'fullscreenElement', {
+      configurable: true,
+      get: () => fullscreenTarget,
+    });
+    HTMLElement.prototype.requestFullscreen = function requestFullscreen() {
+      fullscreenTarget = this;
+      document.dispatchEvent(new Event('fullscreenchange'));
+      return Promise.resolve();
+    };
+    document.exitFullscreen = function exitFullscreen() {
+      fullscreenTarget = null;
+      document.dispatchEvent(new Event('fullscreenchange'));
+      return Promise.resolve();
+    };
+  });
+  await mockApplicationApi(page);
+  await page.goto('/movie/27205');
+  const hit = page.locator('[data-player-fullscreen-hit]');
+  await expect(hit).toBeVisible();
+  await hit.focus();
+  await page.keyboard.press('Enter');
+
+  await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__nativeBridgeMessages.some(message =>
+    message.type === 'MYFILM_FULLSCREEN' && message.active === true
+  ))).toBe(true);
+
+  const detailUrl = page.url();
+  await page.evaluate(() => MyFilmPlatform.handleBack());
+  await expect.poll(() => page.evaluate(() => Boolean(document.fullscreenElement))).toBe(false);
+  expect(page.url()).toBe(detailUrl);
+  await expect.poll(() => page.evaluate(() => window.__nativeBridgeMessages.some(message =>
+    message.type === 'MYFILM_BACK_RESULT' && message.handled === true
+  ))).toBe(true);
+});
+
+test('TV Back from detail returns home and destroys the old player iframe', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV-only behavior');
+  await mockApplicationApi(page);
+  await page.goto('/');
+  await page.evaluate(() => Router.go('/movie/27205'));
+  await expect(page).toHaveURL(/\/movie\/27205$/);
+  await expect(page.locator('.iframe-player-wrap iframe')).toHaveCount(1);
+
+  await page.evaluate(() => MyFilmPlatform.handleBack());
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator('#view-movie iframe')).toHaveCount(0);
 });
