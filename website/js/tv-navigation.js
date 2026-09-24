@@ -51,7 +51,15 @@ const MyFilmTVNavigation = (() => {
   function focusInitial() {
     preparePlayerFocusTargets();
     if (isValidFocusTarget(document.activeElement)) return;
-    const target = document.querySelector('.view--active .movie-card,[data-route].active,.nav-brand') || focusables()[0];
+    const target = document.querySelector(
+      '.view--active #btn-scroll-player,' +
+      '.view--active #burger-trigger,' +
+      '.view--active [data-player-fullscreen-hit],' +
+      '.view--active .filter-btn,' +
+      '.view--active .movie-card,' +
+      '[data-route].active,' +
+      '.nav-brand'
+    ) || focusables()[0];
     target?.focus({ preventScroll: true });
   }
 

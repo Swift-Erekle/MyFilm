@@ -420,3 +420,13 @@ test('TV vertical navigation can escape a movie-card row to controls above it', 
   });
   expect(activeCenterY).toBeLessThan(before.y + before.height / 2);
 });
+
+
+test('TV detail initial focus lands on the primary Watch action instead of similar cards', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV-only focus behavior');
+  await mockApplicationApi(page);
+  await page.goto('/movie/27205');
+
+  await expect(page.locator('#btn-scroll-player')).toBeVisible();
+  await expect.poll(() => page.evaluate(() => document.activeElement?.id)).toBe('btn-scroll-player');
+});
