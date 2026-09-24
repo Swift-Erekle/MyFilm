@@ -368,3 +368,41 @@ test('switching details prevents an older episode discovery from mutating the ne
   await expect(page.locator('.detail-title')).toHaveText('Inception');
   await expect(page.locator('#burger-panel')).toHaveCount(0);
 });
+
+
+test('TV Back on root delegates app exit instead of changing the web route', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV-only native exit contract');
+  await installNativeBridgeAndFullscreenMock(page);
+  await mockLifecycleApi(page);
+  await page.goto('/');
+  await expect(page).toHaveURL(/\/$/);
+
+  const handled = await page.evaluate(() => MyFilmPlatform.handleBack());
+  expect(handled).toBe(false);
+  await expect(page).toHaveURL(/\/$/);
+  await expect.poll(() => page.evaluate(() =>
+    window.__myfilmNativeMessages.some(message =>
+      message?.type === 'MYFILM_BACK_RESULT' && message.handled === false
+    )
+  )).toBe(true);
+});
+
+test('TV Back closes an open app-download dialog before leaving root', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV-only transient UI lifecycle');
+  await installNativeBridgeAndFullscreenMock(page);
+  await mockLifecycleApi(page);
+  await page.goto('/');
+
+  await page.locator('#install-app-btn').click();
+  await expect(page.locator('#app-download-dialog')).toBeVisible();
+
+  const handled = await page.evaluate(() => MyFilmPlatform.handleBack());
+  expect(handled).toBe(true);
+  await expect(page.locator('#app-download-dialog')).not.toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
+  await expect.poll(() => page.evaluate(() =>
+    window.__myfilmNativeMessages.some(message =>
+      message?.type === 'MYFILM_BACK_RESULT' && message.handled === true
+    )
+  )).toBe(true);
+});
