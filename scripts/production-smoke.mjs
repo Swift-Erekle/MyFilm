@@ -132,7 +132,7 @@ async function main() {
   check(movieResponse?.status() === 200, 'TV movie detail returns HTTP 200', { status: movieResponse?.status() });
   await tvPage.waitForSelector('.detail-title', { state: 'visible', timeout: 20_000 });
   const movieTitle = (await tvPage.locator('.detail-title').textContent())?.trim() || '';
-  check(/Inception/i.test(movieTitle), 'TV movie detail renders Inception', { movieTitle });
+  check(/Inception|დასაწყისი/i.test(movieTitle), 'TV movie detail renders the expected Inception title', { movieTitle });
 
   const watch = tvPage.locator('#btn-scroll-player');
   check(await watch.isVisible(), 'TV Watch action is visible');
