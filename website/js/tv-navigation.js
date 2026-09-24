@@ -48,9 +48,9 @@ const MyFilmTVNavigation = (() => {
     }).filter(Boolean).sort((a, b) => a.score - b.score)[0]?.candidate || null;
   }
 
-  function focusInitial() {
+  function focusInitial(force = false) {
     preparePlayerFocusTargets();
-    if (isValidFocusTarget(document.activeElement)) return;
+    if (!force && isValidFocusTarget(document.activeElement)) return;
     const target = document.querySelector(
       '.view--active #btn-scroll-player,' +
       '.view--active #burger-trigger,' +
@@ -93,7 +93,8 @@ const MyFilmTVNavigation = (() => {
     document.documentElement.classList.add('myfilm-tv');
     preparePlayerFocusTargets();
     document.addEventListener('keydown', onKeyDown, true);
-    window.addEventListener('myfilm:navigation', () => requestAnimationFrame(focusInitial));
+    window.addEventListener('myfilm:navigation', () => requestAnimationFrame(() => focusInitial(true)));
+    window.addEventListener('myfilm:content-ready', () => requestAnimationFrame(() => focusInitial(true)));
     new MutationObserver(() => {
       preparePlayerFocusTargets();
       if (!isValidFocusTarget(document.activeElement)) requestAnimationFrame(focusInitial);
