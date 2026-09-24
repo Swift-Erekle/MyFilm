@@ -393,3 +393,30 @@ test('TV Back from detail returns home and destroys the old player iframe', asyn
   await expect(page).toHaveURL(/\/$/);
   await expect(page.locator('#view-movie iframe')).toHaveCount(0);
 });
+
+
+test('TV vertical navigation can escape a movie-card row to controls above it', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV-only spatial navigation');
+  await mockApplicationApi(page);
+  await page.goto('/');
+
+  const card = page.locator('.movie-card').first();
+  await expect(card).toBeVisible();
+  await card.focus();
+  const before = await card.boundingBox();
+  expect(before).toBeTruthy();
+
+  await page.keyboard.press('ArrowUp');
+  await expect.poll(() => page.evaluate(() => {
+    const active = document.activeElement;
+    if (!active || active === document.body || active.classList.contains('movie-card')) return null;
+    const rect = active.getBoundingClientRect();
+    return { tag: active.tagName, y: rect.top + rect.height / 2 };
+  })).not.toBeNull();
+
+  const activeCenterY = await page.evaluate(() => {
+    const rect = document.activeElement.getBoundingClientRect();
+    return rect.top + rect.height / 2;
+  });
+  expect(activeCenterY).toBeLessThan(before.y + before.height / 2);
+});

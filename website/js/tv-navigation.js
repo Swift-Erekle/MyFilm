@@ -35,7 +35,7 @@ const MyFilmTVNavigation = (() => {
     const vertical = direction === 'up' || direction === 'down';
     const sign = direction === 'up' || direction === 'left' ? -1 : 1;
     let candidates = focusables().filter(candidate => candidate !== current);
-    if (current.classList.contains('movie-card')) {
+    if (!vertical && current.classList.contains('movie-card')) {
       const cards = candidates.filter(candidate => candidate.classList.contains('movie-card'));
       if (cards.length) candidates = cards;
     }
