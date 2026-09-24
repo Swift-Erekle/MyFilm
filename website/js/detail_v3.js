@@ -14,8 +14,10 @@ const DetailView = (() => {
   let workerEpisodes = [];   // [{season, episode, streams}]
   let currentEpIdx   = 0;
   let outsideClickHandler = null;
+  let renderVersion = 0;
 
   function cleanup() {
+    renderVersion += 1;
     if (outsideClickHandler) {
       document.removeEventListener('click', outsideClickHandler);
       outsideClickHandler = null;
@@ -25,6 +27,7 @@ const DetailView = (() => {
   // ---- ENTRY ----
   async function render(params) {
     cleanup();
+    const renderToken = renderVersion;
     const id   = params[0];
     const type = params[1] || 'movie';
 
@@ -59,6 +62,7 @@ const DetailView = (() => {
 
     resolvedTmdbId = realTmdbId;
     item = await API.detail(realTmdbId, type);
+    if (renderToken !== renderVersion) return;
 
     // Override names with our exact animetv.ge matches if it's a custom anime!
     if (item && customMatch) {
@@ -102,6 +106,7 @@ const DetailView = (() => {
       allSeasons = (item.seasons || []).filter(s => s.season_number > 0);
     }
 
+    if (renderToken !== renderVersion) return;
     rebuildView();
   }
 

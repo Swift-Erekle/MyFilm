@@ -406,3 +406,82 @@ test('TV Back closes an open app-download dialog before leaving root', async ({ 
     )
   )).toBe(true);
 });
+
+
+test('leaving a slow detail request prevents a stale player from resurrecting', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV route lifecycle cancellation');
+  await mockLifecycleApi(page);
+
+  await page.unroute('**/api/tmdb/**');
+  await page.route('**/api/tmdb/**', async route => {
+    const url = new URL(route.request().url());
+    if (/\/movie\/27205$/.test(url.pathname)) {
+      await new Promise(resolve => setTimeout(resolve, 700));
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(sampleMovie) });
+      return;
+    }
+    if (/\/genre\/(?:movie|tv)\/list$/.test(url.pathname)) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ genres: [{ id: 28, name: 'Action' }] }) });
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ page: 1, results: [sampleMovie], total_pages: 1, total_results: 1 }),
+    });
+  });
+
+  await page.goto('/');
+  await page.evaluate(() => Router.go('/movie/27205'));
+  await expect(page).toHaveURL(/\/movie\/27205$/);
+  await page.evaluate(() => Router.go('/'));
+  await expect(page).toHaveURL(/\/$/);
+
+  await page.waitForTimeout(1000);
+  await expect(page.locator('#view-home')).toHaveClass(/view--active/);
+  await expect(page.locator('#player-container iframe')).toHaveCount(0);
+  await expect(page.locator('#view-movie')).toHaveClass(/view--hidden/);
+});
+
+test('a newer detail navigation cannot be overwritten by an older slow detail response', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'tv', 'TV route lifecycle cancellation');
+  const secondMovie = {
+    ...sampleMovie,
+    id: 603,
+    title: 'The Matrix',
+    original_title: 'The Matrix',
+    release_date: '1999-03-31',
+  };
+  await mockLifecycleApi(page);
+
+  await page.unroute('**/api/tmdb/**');
+  await page.route('**/api/tmdb/**', async route => {
+    const url = new URL(route.request().url());
+    if (/\/movie\/27205$/.test(url.pathname)) {
+      await new Promise(resolve => setTimeout(resolve, 700));
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(sampleMovie) });
+      return;
+    }
+    if (/\/movie\/603$/.test(url.pathname)) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify(secondMovie) });
+      return;
+    }
+    if (/\/genre\/(?:movie|tv)\/list$/.test(url.pathname)) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ genres: [{ id: 28, name: 'Action' }] }) });
+      return;
+    }
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ page: 1, results: [sampleMovie], total_pages: 1, total_results: 1 }),
+    });
+  });
+
+  await page.goto('/');
+  await page.evaluate(() => Router.go('/movie/27205'));
+  await page.evaluate(() => Router.go('/movie/603'));
+  await expect(page).toHaveURL(/\/movie\/603$/);
+  await expect(page.locator('.detail-title')).toHaveText('The Matrix');
+
+  await page.waitForTimeout(1000);
+  await expect(page).toHaveURL(/\/movie\/603$/);
+  await expect(page.locator('.detail-title')).toHaveText('The Matrix');
+});
