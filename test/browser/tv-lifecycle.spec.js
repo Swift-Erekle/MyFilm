@@ -393,7 +393,7 @@ test('TV Back closes an open app-download dialog before leaving root', async ({ 
   await mockLifecycleApi(page);
   await page.goto('/');
 
-  await page.locator('#install-app-btn').click();
+  await page.evaluate(() => document.getElementById('app-download-dialog')?.showModal());
   await expect(page.locator('#app-download-dialog')).toBeVisible();
 
   const handled = await page.evaluate(() => MyFilmPlatform.handleBack());
