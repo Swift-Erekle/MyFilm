@@ -191,7 +191,7 @@ test('PWA service worker installs and caches the static app shell', async ({ bro
     return { scope: registration.scope, cacheNames, cachedUrls };
   });
   expect(result.scope).toBe('http://127.0.0.1:8094/');
-  expect(result.cacheNames).toContain('myfilm-shell-v1.1.8');
+  expect(result.cacheNames).toContain('myfilm-shell-v1.1.9');
   expect(result.cachedUrls).toContain('/offline.html');
   expect(result.cachedUrls.some(path => /^\/(?:api|imovs|play|hls)/.test(path))).toBe(false);
   await context.close();
