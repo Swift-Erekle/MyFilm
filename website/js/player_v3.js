@@ -544,7 +544,7 @@ const Player = (() => {
     }
     return `
       <div class="iframe-player-wrap">
-        <iframe src="${htmlEscape(url)}" allowfullscreen scrolling="no" sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
+        <iframe src="${htmlEscape(url)}" tabindex="-1" allowfullscreen scrolling="no" sandbox="allow-scripts allow-same-origin allow-forms allow-presentation"
           allow="autoplay; fullscreen; encrypted-media; picture-in-picture"
           referrerpolicy="no-referrer"
           style="width:100%;height:100%;border:none;display:block"></iframe>
@@ -568,6 +568,7 @@ const Player = (() => {
     container.classList.add('iframe-player-wrap');
     const iframe = document.createElement('iframe');
     iframe.allowFullscreen = true;
+    iframe.tabIndex = -1;
     iframe.setAttribute('allow', 'autoplay; fullscreen; encrypted-media; picture-in-picture');
     iframe.setAttribute('scrolling', 'no');
     iframe.referrerPolicy = 'no-referrer';

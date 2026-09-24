@@ -18,7 +18,7 @@ const MyFilmTVNavigation = (() => {
   }
 
   function preparePlayerFocusTargets(root = document) {
-    root.querySelectorAll?.('.view--active iframe, .view--active video[controls], .view--active [data-player-fullscreen-hit]')
+    root.querySelectorAll?.('.view--active video[controls], .view--active [data-player-fullscreen-hit]')
       .forEach(element => {
         if (element.tabIndex < 0 || !element.hasAttribute('tabindex')) element.tabIndex = 0;
       });

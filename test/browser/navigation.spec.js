@@ -322,14 +322,14 @@ test('TV series burger opens, closes with Back, and episode selection closes it'
   await expect(page.locator('#now-playing-label')).toContainText('სეზონი 1');
 });
 
-test('TV player focus targets include iframe and fullscreen hit target', async ({ page }, testInfo) => {
+test('TV player keeps cross-origin iframe out of D-pad focus and exposes fullscreen target', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'tv', 'TV-only behavior');
   await mockApplicationApi(page);
   await page.goto('/movie/27205');
   const iframe = page.locator('.iframe-player-wrap iframe');
   const fullscreenHit = page.locator('.player-fullscreen-hit--iframe');
   await expect(iframe).toBeVisible();
-  await expect.poll(() => iframe.evaluate(element => element.tabIndex)).toBe(0);
+  await expect.poll(() => iframe.evaluate(element => element.tabIndex)).toBe(-1);
   await expect.poll(() => fullscreenHit.evaluate(element => element.tabIndex)).toBe(0);
   await fullscreenHit.focus();
   await expect(fullscreenHit).toBeFocused();
