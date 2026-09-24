@@ -24,8 +24,7 @@ function looksLikeMediaUrl(value) {
   try {
     const u = new URL(value);
     if (['/play', '/hls', '/hlsseg', '/hlskey'].includes(u.pathname)) return true;
-    return /\.(?:m3u8|mp4|m4s|ts)(?:$|\?)/i.test(u.pathname + u.search)
-      || /(?:jwplatform|cloudfront|akamai|cdn|stream)/i.test(u.hostname);
+    return /\.(?:m3u8|mp4|m4s|ts)(?:$|\?)/i.test(u.pathname + u.search);
   } catch {
     return false;
   }
@@ -240,16 +239,63 @@ async function main() {
         mediaRequests: tvMediaRequests.slice(-15),
         mediaResponses: tvMediaResponses.slice(-15),
       });
-      if (successfulMedia.length) {
-        note('TV HLS/MSE player receives successful media responses', {
-          mediaResponses: successfulMedia.slice(-15),
-        });
+
+      const hlsRequest = [...tvMediaRequests].reverse().find(item => {
+        try { return new URL(item.url).pathname === '/hls'; } catch { return false; }
+      });
+      check(Boolean(hlsRequest), 'TV HLS fallback requested the production /hls proxy', {
+        mediaRequests: tvMediaRequests.slice(-15),
+      });
+
+      const hlsProbe = await api.get(hlsRequest.url, { timeout: 30_000 });
+      const hlsText = await hlsProbe.text();
+      check(hlsProbe.status() === 200, 'TV production /hls proxy returns HTTP 200', {
+        status: hlsProbe.status(),
+        contentType: hlsProbe.headers()['content-type'] || '',
+      });
+      check(/^#EXTM3U/m.test(hlsText), 'TV production /hls proxy returns a valid HLS manifest');
+
+      let mediaLine = hlsText.split(/\r?\n/).map(line => line.trim()).find(line => line && !line.startsWith('#')) || '';
+      let nestedDepth = 0;
+      while (mediaLine && nestedDepth < 2) {
+        const mediaUrl = new URL(mediaLine, BASE_URL).toString();
+        const pathname = new URL(mediaUrl).pathname;
+        if (pathname === '/hlsseg') break;
+        if (pathname !== '/hls') break;
+        const nested = await api.get(mediaUrl, { timeout: 30_000 });
+        check(nested.status() === 200, 'TV nested HLS playlist returns HTTP 200', { status: nested.status(), mediaUrl });
+        const nestedText = await nested.text();
+        check(/^#EXTM3U/m.test(nestedText), 'TV nested HLS playlist is valid', { mediaUrl });
+        mediaLine = nestedText.split(/\r?\n/).map(line => line.trim()).find(line => line && !line.startsWith('#')) || '';
+        nestedDepth += 1;
+      }
+
+      if (mediaLine) {
+        const segmentUrl = new URL(mediaLine, BASE_URL).toString();
+        if (new URL(segmentUrl).pathname === '/hlsseg') {
+          const segment = await api.get(segmentUrl, {
+            headers: { Range: 'bytes=0-2047' },
+            timeout: 30_000,
+          });
+          const segmentBytes = await segment.body();
+          check([200, 206].includes(segment.status()), 'TV production /hlsseg returns HTTP 200/206', {
+            status: segment.status(),
+            contentType: segment.headers()['content-type'] || '',
+            bytesRead: segmentBytes.length,
+          });
+          check(segmentBytes.length > 0, 'TV production /hlsseg returns media bytes', {
+            bytesRead: segmentBytes.length,
+          });
+        } else {
+          warnings.push({ type: 'hls-first-media-line-not-segment', mediaLine: segmentUrl });
+        }
       } else {
-        warnings.push({
-          type: 'hls-media-response-not-observed',
-          message: 'The player created an MSE blob without an immediate media error, but the smoke runner did not observe a media-pattern response before the check completed.',
-          videoState,
-          mediaRequests: tvMediaRequests.slice(-15),
+        warnings.push({ type: 'hls-manifest-has-no-media-line' });
+      }
+
+      if (successfulMedia.length) {
+        note('TV HLS/MSE player receives observed successful media responses', {
+          mediaResponses: successfulMedia.slice(-15),
         });
       }
       note('TV native player is using an HLS/MSE blob URL', { videoState });
@@ -297,7 +343,10 @@ async function main() {
   await tvPage.waitForURL(url => new URL(url).pathname === '/', { timeout: 10_000 });
   check(await tvPage.locator('#view-movie iframe').count() === 0, 'TV movie iframe is removed after leaving detail');
   check(await tvPage.locator('#view-movie video').count() === 0, 'TV native video is removed after leaving detail');
-  check((await tvPage.locator('#player-container').innerHTML()).trim() === '', 'TV player container is empty after leaving detail');
+  const playerContainerCount = await tvPage.locator('#player-container').count();
+  const playerContainerClean = playerContainerCount === 0
+    || (await tvPage.locator('#player-container').first().innerHTML()).trim() === '';
+  check(playerContainerClean, 'TV player container is removed or empty after leaving detail', { playerContainerCount });
 
   const seriesResponse = await tvPage.goto(BASE_URL + '/tv/125988?tv=1', { waitUntil: 'domcontentloaded', timeout: 45_000 });
   check(seriesResponse?.status() === 200, 'TV series detail returns HTTP 200', { status: seriesResponse?.status() });
