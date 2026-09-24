@@ -240,7 +240,7 @@ test('ge.movie is hidden when its catalog reports the title as unavailable', asy
 
 test('a selected series episode adds only providers that return that episode', async ({ page }) => {
   await mockApplicationApi(page);
-  await page.goto('/tv/125988');
+  await page.goto('/tv/125988', { waitUntil: 'domcontentloaded' });
   await expect(page.locator('.detail-title')).toHaveText('Silo');
   await expect(page.locator('#quality-select option')).toHaveText(['ge.movie', 'adjaranetto.com', 'imovs.ge', 'Croconet.cam']);
   await expect(page.locator('#quality-select')).toHaveValue('0');
